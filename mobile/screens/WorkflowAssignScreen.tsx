@@ -5,7 +5,7 @@ import { useProducts, useTickets, useAssignStock, useRecommendTicket } from '../
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
 import { CameraHUD } from '../components/CameraHUD';
 import { TicketCard } from '../components/Cards';
-import { PrimaryButton } from '../components/AppButtons';
+import { PrimaryButton, SecondaryButton } from '../components/AppButtons';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { Product, Ticket, ScanResult } from '../types';
 
@@ -94,6 +94,19 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
     }
   };
 
+  const handlePreviousStep = () => {
+    if (step > 1 && step <= 3) setStep((step - 1) as 1 | 2 | 3);
+  };
+
+  const handleJumpToStep = (targetStep: number) => {
+    const t = targetStep as 1 | 2 | 3;
+    if (t === step) return;
+    if (t < step) { setStep(t); return; }
+    // Forward jumps require guards
+    if (t === 2 && selectedProduct) setStep(2);
+    else if (t === 3 && selectedProduct && targetTicket) setStep(3);
+  };
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -107,17 +120,29 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
         </TouchableOpacity>
       </View>
 
-      {/* Steppers */}
+      {/* Steppers — clickable: tap to jump back to any completed step */}
       <View style={styles.stepperRow}>
-        {[1, 2, 3].map((s) => (
-          <View
-            key={s}
-            style={[
-              styles.stepIndicator,
-              s === step ? styles.stepActive : s < step ? styles.stepCompleted : styles.stepInactive
-            ]}
-          />
-        ))}
+        {[1, 2, 3].map((s) => {
+          const isActive = s === step;
+          const isCompleted = s < step;
+          const isInactive = !isActive && !isCompleted;
+          return (
+            <TouchableOpacity
+              key={s}
+              activeOpacity={isInactive ? 1 : 0.6}
+              onPress={() => handleJumpToStep(s)}
+              style={{ flex: 1, marginHorizontal: 2 }}
+              disabled={isInactive}
+            >
+              <View
+                style={[
+                  styles.stepIndicator,
+                  isActive ? styles.stepActive : isCompleted ? styles.stepCompleted : styles.stepInactive
+                ]}
+              />
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -189,7 +214,7 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
             )}
 
             {selectedProduct && (
-              <PrimaryButton title="Choose Ticket (Step 2)" onPress={() => setStep(2)} icon="arrow-right" />
+              <PrimaryButton title="Choose Ticket → Step 2" onPress={() => setStep(2)} icon="arrow-right" />
             )}
           </View>
         )}
@@ -245,19 +270,26 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
                       <Text style={styles.aiReasonText}>"{aiRecommendation.reason}"</Text>
                     </View>
 
-                    <PrimaryButton 
-                      title="Confirm Allocation" 
-                      onPress={handleConfirmAssignment} 
-                      loading={assignStockMutation.isPending}
-                      disabled={assignStockMutation.isPending}
-                      icon="check-bold" 
-                    />
+                    <View style={styles.navButtonRow}>
+                      <SecondaryButton title="Back to Step 1" onPress={handlePreviousStep} icon="arrow-left" style={{ flex: 1, marginRight: 8 }} />
+                      <PrimaryButton 
+                        title="Confirm Allocation"
+                        onPress={handleConfirmAssignment} 
+                        loading={assignStockMutation.isPending}
+                        disabled={assignStockMutation.isPending}
+                        icon="check-bold" 
+                        style={{ flex: 1, marginLeft: 8 }}
+                      />
+                    </View>
                   </Surface>
                 ) : (
-                  <Surface style={styles.aiLoadingCard} elevation={1}>
-                    <MaterialCommunityIcons name="sync" size={32} color={Colors.primaryLight} style={styles.spinIcon} />
-                    <Text style={styles.aiLoadingText}>Computing optimal ticket matches...</Text>
-                  </Surface>
+                  <View>
+                    <Surface style={styles.aiLoadingCard} elevation={1}>
+                      <MaterialCommunityIcons name="sync" size={32} color={Colors.primaryLight} style={styles.spinIcon} />
+                      <Text style={styles.aiLoadingText}>Computing optimal ticket matches...</Text>
+                    </Surface>
+                    <SecondaryButton title="Back to Step 1" onPress={handlePreviousStep} icon="arrow-left" style={{ marginTop: Spacing.md }} />
+                  </View>
                 )}
               </View>
             )}
@@ -274,15 +306,19 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
                   />
                 ))}
 
-                {targetTicket && (
-                  <PrimaryButton 
-                    title="Confirm Assignment" 
-                    onPress={handleConfirmAssignment} 
-                    loading={assignStockMutation.isPending}
-                    disabled={assignStockMutation.isPending}
-                    icon="check" 
-                  />
-                )}
+                <View style={styles.navButtonRow}>
+                  <SecondaryButton title="Back to Step 1" onPress={handlePreviousStep} icon="arrow-left" style={{ flex: 1, marginRight: 8 }} />
+                  {targetTicket && (
+                    <PrimaryButton 
+                      title="Confirm Assignment"
+                      onPress={handleConfirmAssignment} 
+                      loading={assignStockMutation.isPending}
+                      disabled={assignStockMutation.isPending}
+                      icon="check" 
+                      style={{ flex: 1, marginLeft: 8 }}
+                    />
+                  )}
+                </View>
               </View>
             )}
 
@@ -306,15 +342,19 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
                   </TouchableOpacity>
                 </Surface>
 
-                {targetTicket && (
-                  <PrimaryButton 
-                    title="Confirm Assignment" 
-                    onPress={handleConfirmAssignment} 
-                    loading={assignStockMutation.isPending}
-                    disabled={assignStockMutation.isPending}
-                    icon="check" 
-                  />
-                )}
+                <View style={styles.navButtonRow}>
+                  <SecondaryButton title="Back to Step 1" onPress={handlePreviousStep} icon="arrow-left" style={{ flex: 1, marginRight: 8 }} />
+                  {targetTicket && (
+                    <PrimaryButton 
+                      title="Confirm Assignment"
+                      onPress={handleConfirmAssignment} 
+                      loading={assignStockMutation.isPending}
+                      disabled={assignStockMutation.isPending}
+                      icon="check" 
+                      style={{ flex: 1, marginLeft: 8 }}
+                    />
+                  )}
+                </View>
               </View>
             )}
           </View>
@@ -347,7 +387,10 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
               </View>
             </Surface>
 
-            <PrimaryButton title="Return to Dashboard" onPress={() => navigation.navigate('MainDrawer')} icon="home" />
+            <View style={styles.navButtonRow}>
+              <SecondaryButton title="Review Details" onPress={handlePreviousStep} icon="arrow-left" style={{ flex: 1, marginRight: 8 }} />
+              <PrimaryButton title="Return to Dashboard" onPress={() => navigation.navigate('MainDrawer')} icon="home" style={{ flex: 1, marginLeft: 8 }} />
+            </View>
           </View>
         )}
       </ScrollView>
@@ -423,6 +466,12 @@ const styles = StyleSheet.create({
   },
   stepContainer: {
     flex: 1,
+  },
+  navButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.sm,
   },
   stepTitle: {
     fontSize: 14,

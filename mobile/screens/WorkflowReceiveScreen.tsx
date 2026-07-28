@@ -3,7 +3,7 @@ import { StyleSheet, View, ScrollView, TouchableOpacity, Alert, Image } from 're
 import { Text, Surface, Divider, useTheme, IconButton } from 'react-native-paper';
 import { usePurchaseOrders, useReceiveStock } from '../hooks/useApi';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
-import { PrimaryButton } from '../components/AppButtons';
+import { PrimaryButton, SecondaryButton } from '../components/AppButtons';
 import { YOLOCameraHUD } from '../components/YOLOCameraHUD';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { ScanResult, PurchaseOrder } from '../types';
@@ -154,6 +154,31 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
     else if (step === 4 && labelScan) setStep(5);
   };
 
+  const handlePreviousStep = () => {
+    // Step 5 (success) → back to review (step 4) — this discards nothing since save already happened
+    // For steps 2..4: move back; previous scan results are preserved in state
+    if (step > 1 && step <= 5) setStep((step - 1) as 1 | 2 | 3 | 4 | 5);
+  };
+
+  // Allow the technician to jump DIRECTLY to any already-completed step by clicking the stepper bar.
+  // Forward jumps are blocked (require scans); backward jumps and same-step are fine.
+  const handleJumpToStep = (targetStep: number) => {
+    const t = targetStep as 1 | 2 | 3 | 4 | 5;
+    if (t === step) return;
+
+    // Going BACK is always allowed (data for earlier steps is already captured)
+    if (t < step) {
+      setStep(t);
+      return;
+    }
+
+    // Going FORWARD is allowed only if all intermediate scans are present (mirror handleNextStep guards)
+    if (t === 2 && productScan) setStep(2);
+    else if (t === 3 && productScan && invoiceScan) setStep(3);
+    else if (t === 4 && productScan && invoiceScan && selectedPO) setStep(4);
+    else if (t === 5 && productScan && invoiceScan && selectedPO && labelScan) setStep(5);
+  };
+
   const handleConfirmReceive = async () => {
     if (!productScan || !selectedPO || !labelScan) return;
     
@@ -198,17 +223,29 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
         </TouchableOpacity>
       </View>
 
-      {/* Stepper bar */}
+      {/* Stepper bar — clickable: tap any completed/current step to jump back */}
       <View style={styles.stepperRow}>
-        {[1, 2, 3, 4, 5].map((s) => (
-          <View
-            key={s}
-            style={[
-              styles.stepIndicator,
-              s === step ? styles.stepActive : s < step ? styles.stepCompleted : styles.stepInactive
-            ]}
-          />
-        ))}
+        {[1, 2, 3, 4, 5].map((s) => {
+          const isActive = s === step;
+          const isCompleted = s < step;
+          const isInactive = !isActive && !isCompleted;
+          return (
+            <TouchableOpacity
+              key={s}
+              activeOpacity={isInactive ? 1 : 0.6}
+              onPress={() => handleJumpToStep(s)}
+              style={{ flex: 1, marginHorizontal: 2 }}
+              disabled={isInactive}
+            >
+              <View
+                style={[
+                  styles.stepIndicator,
+                  isActive ? styles.stepActive : isCompleted ? styles.stepCompleted : styles.stepInactive
+                ]}
+              />
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -372,9 +409,12 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
               </TouchableOpacity>
             )}
 
-            {invoiceScan && (
-              <PrimaryButton title="Confirm Purchase Order" onPress={handleNextStep} icon="arrow-right" />
-            )}
+            <View style={styles.navButtonRow}>
+              <SecondaryButton title="Back to Step 1" onPress={handlePreviousStep} icon="arrow-left" style={{ flex: 1, marginRight: 8 }} />
+              {invoiceScan && (
+                <PrimaryButton title="Confirm PO → Step 3" onPress={handleNextStep} icon="arrow-right" style={{ flex: 1, marginLeft: 8 }} />
+              )}
+            </View>
           </View>
         )}
 
@@ -447,9 +487,12 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
               );
             })}
 
-            {selectedPO && (
-              <PrimaryButton title="Continue to Step 4" onPress={handleNextStep} icon="arrow-right" />
-            )}
+            <View style={styles.navButtonRow}>
+              <SecondaryButton title="Back to Step 2" onPress={handlePreviousStep} icon="arrow-left" style={{ flex: 1, marginRight: 8 }} />
+              {selectedPO && (
+                <PrimaryButton title="Continue to Step 4" onPress={handleNextStep} icon="arrow-right" style={{ flex: 1, marginLeft: 8 }} />
+              )}
+            </View>
           </View>
         )}
 
@@ -561,13 +604,17 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
             )}
 
             {labelScan && (
-              <PrimaryButton 
-                title="Register Items in Stock" 
-                onPress={handleConfirmReceive} 
-                loading={receiveStockMutation.isPending}
-                disabled={receiveStockMutation.isPending}
-                icon="check-circle-outline" 
-              />
+              <View style={styles.navButtonRow}>
+                <SecondaryButton title="Back to Step 3" onPress={handlePreviousStep} icon="arrow-left" style={{ flex: 1, marginRight: 8 }} />
+                <PrimaryButton 
+                  title="Register in Stock" 
+                  onPress={handleConfirmReceive} 
+                  loading={receiveStockMutation.isPending}
+                  disabled={receiveStockMutation.isPending}
+                  icon="check-circle-outline" 
+                  style={{ flex: 1, marginLeft: 8 }}
+                />
+              </View>
             )}
           </View>
         )}
@@ -599,7 +646,10 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
               </View>
             </Surface>
 
-            <PrimaryButton title="Return to Dashboard" onPress={() => navigation.navigate('MainDrawer')} icon="home" />
+            <View style={styles.navButtonRow}>
+              <SecondaryButton title="Review Details" onPress={handlePreviousStep} icon="arrow-left" style={{ flex: 1, marginRight: 8 }} />
+              <PrimaryButton title="Return to Dashboard" onPress={() => navigation.navigate('MainDrawer')} icon="home" style={{ flex: 1, marginLeft: 8 }} />
+            </View>
           </View>
         )}
       </ScrollView>
@@ -675,6 +725,12 @@ const styles = StyleSheet.create({
   },
   stepContainer: {
     flex: 1,
+  },
+  navButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.sm,
   },
   stepTitle: {
     fontSize: 14,
