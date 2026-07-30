@@ -648,7 +648,7 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
 
             <View style={styles.navButtonRow}>
               <SecondaryButton title="Review Details" onPress={handlePreviousStep} icon="arrow-left" style={{ flex: 1, marginRight: 8 }} />
-              <PrimaryButton title="Return to Dashboard" onPress={() => navigation.navigate('MainDrawer')} icon="home" style={{ flex: 1, marginLeft: 8 }} />
+              <PrimaryButton title="Return to Dashboard" onPress={() => navigation.navigate('MainTabs')} icon="home" style={{ flex: 1, marginLeft: 8 }} />
             </View>
           </View>
         )}
