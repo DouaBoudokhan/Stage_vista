@@ -23,7 +23,7 @@ stockit/
 │   │   │   ├── stock_entry.py        stock_entries table (IN audit)
 │   │   │   └── stock_exit.py         stock_exits table (OUT audit)
 │   │   ├── routers/                  API endpoints
-│   │   │   ├── inventory.py          /stock/in, /stock/out, /history, /tickets (mounted at both /api/v1 and /)
+│   │   │   ├── inventory.py          /stock/in, /stock/out, /history, /tickets, /dashboard/kpis, /inventory (mounted at both /api/v1 and /)
 │   │   │   ├── products.py           /products/detect, /products/categories, /products/debug/model-status
 │   │   │   ├── document_analysis.py  Invoice OCR + PO extraction pipeline
 │   │   │   ├── labels.py             Shipping label scanning
@@ -31,8 +31,9 @@ stockit/
 │   │   │   ├── auth.py               (currently commented out in main.py)
 │   │   │   └── stock_entry.py        (currently commented out in main.py)
 │   │   ├── schemas/                  Pydantic request/response models
+│   │   │   ├── dashboard.py          DashboardKPIs, LowStockAlert, CategoryStock schemas
 │   │   ├── services/                 Business logic layer
-│   │   │   ├── inventory_service.py  receive_stock, assign_stock, create_inventory_and_stock_entry (Transactional)
+│   │   │   ├── inventory_service.py  receive_stock, assign_stock, create_inventory_and_stock_entry, get_dashboard_kpis (Transactional)
 │   │   │   ├── yolo_service.py       YOLO11 product detection wrapper
 │   │   │   ├── ocr_service.py        pytesseract invoice OCR (requires Tesseract binary)
 │   │   │   ├── ocr_parser_service.py OCR text -> structured PO line items
@@ -111,7 +112,7 @@ stockit/
     ├── services/
     │   ├── auth.ts                   secureAuth: AsyncStorage + SecureStore token wrapper
     │   ├── camera.ts                 Camera permission + capture helpers
-    │   ├── ocr.ts                    Mobile OCR bridge
+    │   ├── ocr.ts                    Mobile OCR bridge using @react-native-ml-kit/text-recognition
     │   ├── notification.ts           Push notification helpers
     │   └── storage.ts                Binary/asset storage helper
     ├── theme/index.ts                RN Paper theme provider configuration
@@ -205,6 +206,44 @@ All server-state lives in [hooks/useApi.ts](file:///c:/Users/USER/Downloads/stoc
 - Axios interceptor ([axios.ts](file:///c:/Users/USER/Downloads/stockit/mobile/api/axios.ts#L27-L42)) queues 401 failures, calls `/auth/refresh`, replays queued requests with the new token.
 - AuthContext exposes `isAuthenticated` — Navigation renders Splash → Login → MainTabs based on this flag.
 
+### New API Endpoints
+- `GET /dashboard/kpis` - Returns comprehensive dashboard metrics including total inventory, open tickets, low stock alerts, category distribution, and weekly movement statistics
+- `GET /inventory` - Lists all inventory rows with optional filtering by category, brand, and search terms
+- `GET /inventory/{inventory_id}` - Get a single inventory item by primary key
+- `GET /history/movements` - Raw inventory_movements feed for operational logging
+- `POST /tickets` - Create new support tickets with auto-generated IDs
+
+### Enhanced Inventory Service
+The `inventory_service.py` has been significantly enhanced with:
+- **Movement Persistence**: Fixed issue where `inventory_movements` table wasn't being written during stock operations
+- **Product Resolution**: Automatic product type resolution and creation with normalization for YOLO categories
+- **Stock Adjustment**: Safe stock-on-hand delta adjustments with clamping to prevent negative values
+- **Dashboard KPIs**: Real-time calculation of key performance indicators including low stock alerts and category distribution
+- **Transactional Operations**: Proper database transaction handling for stock entry and exit operations
+- **Serial Number Normalization**: Handling of various serial number formats (comma-separated, arrays, etc.)
+
+### Enhanced Data Models
+- **Inventory Model**: Added hybrid property for backward-compatible category access via products FK
+- **Product Model**: Enforced 3-column constraint (id, product_type, stock_on_hand) with proper validation
+- **Dashboard Schemas**: New Pydantic models for KPIs, low stock alerts, and category stock distribution
+- **Movement Tracking**: Enhanced inventory_movements table with proper timestamp and reference tracking
+
+### Mobile App Updates
+- **ML Kit OCR Integration**: Added `@react-native-ml-kit/text-recognition` for on-device text recognition as an alternative to server-side OCR
+- **Expo SDK 54**: Updated to latest Expo SDK with improved camera and barcode scanning capabilities
+- **TypeScript 5.9.2**: Enhanced type safety across the application
+- **Updated Dependencies**: All major dependencies updated to latest stable versions including React 19.1.0 and React Native 0.81.5
+
+### Dashboard Features
+The dashboard now provides comprehensive real-time metrics:
+- **Total Inventory**: Aggregate count of all inventory items across all categories
+- **Stock Valuation**: Calculated value based on product categories and quantities
+- **Open Tickets**: Count of active support tickets requiring attention
+- **Low Stock Alerts**: Dynamic alerts for both product types and individual inventory items falling below thresholds
+- **Category Distribution**: Visual breakdown of stock by product type with percentage shares
+- **Movement Analytics**: Weekly statistics for stock-in, stock-out, and total movements
+- **Status Distribution**: Breakdown of inventory items by status (available, assigned, maintenance, etc.)
+
 ---
 
 ## Workflows (Mobile)
@@ -242,6 +281,7 @@ All server-state lives in [hooks/useApi.ts](file:///c:/Users/USER/Downloads/stoc
 | OCR | pytesseract + Tesseract binary | 0.3.13 (package only) |
 | LLM | Azure AI Foundry / Ollama (Llama 3.3) | Config-driven |
 | HTTP Client | aiohttp, requests | 3.12.0 / ≥2.28 |
+| File Operations | aiofiles | 25.1.0 |
 
 ### Mobile
 | Layer | Tech | Version |
@@ -257,6 +297,7 @@ All server-state lives in [hooks/useApi.ts](file:///c:/Users/USER/Downloads/stoc
 | Camera | expo-camera | 16.0.0 |
 | Barcode | expo-barcode-scanner | 13.0.1 |
 | Image Picker | expo-image-picker | 17.0.0 |
+| OCR | @react-native-ml-kit/text-recognition | 2.0.0 |
 | Secure Storage | expo-secure-store | 15.0.0 |
 | Persistence | @react-native-async-storage/async-storage | 2.2.0 |
 | HTTP | axios | 1.9.0 |
@@ -287,6 +328,11 @@ API_V1_PREFIX=/api/v1
 PROJECT_NAME=StockIT API
 VERSION=1.0.0
 ```
+
+### New Environment Variables
+- `AZURE_CV_ENDPOINT` - Azure Computer Vision endpoint for OCR fallback
+- `PRODUCT_TYPE_LOW_STOCK_THRESHOLD` - Threshold for product type low stock alerts (default: 5)
+- `INVENTORY_ITEM_LOW_STOCK_THRESHOLD` - Threshold for individual item low stock alerts (default: 2)
 
 ### Mobile (`mobile/constants/config.ts` + `app.json extra`)
 ```ts
@@ -337,10 +383,10 @@ Lint/typecheck: `npm run lint`
 | **Tesseract OCR binary missing** | `pytesseract` Python package is installed, but the Tesseract executable is not on PATH. OCR calls fail and return hardcoded sample invoice (INV-2026-8942). | Install Tesseract from UB-Mannheim/tesseract (Windows) or `apt install tesseract-ocr` (Linux). |
 | **"Return to Dashboard" broken in Workflow success screens** | Buttons call `navigation.navigate('MainDrawer')` but the navigator is registered as `MainTabs` (see [navigation/index.tsx](file:///c:/Users/USER/Downloads/stockit/mobile/navigation/index.tsx#L121)). | Fix target name to `'MainTabs'` in WorkflowReceiveScreen and WorkflowAssignScreen. |
 | **Dashboard notification bell uses wrong target** | [DashboardScreen.tsx line 64](file:///c:/Users/USER/Downloads/stockit/mobile/screens/DashboardScreen.tsx#L64) calls `navigate('MainDrawer', { screen: 'DashboardTabs', params: { screen: 'Profile' } })` — neither route exists. | Use `navigate('MainTabs', { screen: 'Profile' })`. |
-| **`inventory_movements` table not written on stock ops** | `receive_stock()` and `assign_stock()` return movement dicts but don't INSERT rows into `inventory_movements`. GET `/history` queries that table → returns only seed/migrated rows, not recent movements from workflows. | The frontend falls back to the returned movement plus React Query cache for the dashboard feed. Requires backend fix to persist on write. |
-| **`assign_stock` does not write `StockExit` or decrement inventory QTY** | Only returns synthetic movement. | N/A — stock-out persistence is not wired yet. |
+| **`inventory_movements` table not written on stock ops** | `receive_stock()` and `assign_stock()` return movement dicts but don't INSERT rows into `inventory_movements`. GET `/history` queries that table → returns only seed/migrated rows, not recent movements from workflows. | **FIXED**: The backend now properly persists movements to `inventory_movements` table via `_persist_movement()` method in `inventory_service.py`. The `/history` endpoint returns both audit tables and movements. |
+| **`assign_stock` does not write `StockExit` or decrement inventory QTY** | Only returns synthetic movement. | **PARTIALLY FIXED**: Stock exit persistence is now implemented via `_persist_stock_exit()` method, but full inventory quantity adjustment still needs verification. |
 | **Auth router is disabled** | `auth.router` and `stock_entry.router` are commented out in [main.py](file:///c:/Users/USER/Downloads/stockit/backend/app/main.py#L84-L85). Login/refresh endpoints return 404. | Mobile AuthContext + refresh interceptor handle missing auth gracefully (fallback to cached state). |
-| **Backend `products` master GET endpoint missing** | Mobile `productsApi.getAll` calls `GET /products` but no router exports that path. `useProducts()` powers Dashboard KPIs and Inventory screen — if the endpoint is absent the screen shows ErrorState. | Verify the correct endpoint exists or wire `/products` GET in inventory router to return synthesized rows from inventory aggregation. |
+| **Backend `products` master GET endpoint missing** | Mobile `productsApi.getAll` calls `GET /products` but no router exports that path. `useProducts()` powers Dashboard KPIs and Inventory screen — if the endpoint is absent the screen shows ErrorState. | **FIXED**: The mobile app now uses `GET /inventory` endpoint instead which provides comprehensive inventory data with filtering capabilities. The products API module has been updated to use the correct endpoints. |
 | **YOLO model file missing from repo** | `models_ai/best.pt` is a `.gitkeep` placeholder. `yolo_service.py` will fail on load. | Place your trained `best.pt` in `backend/models_ai/`. |
 
 ---
@@ -368,3 +414,32 @@ Lint/typecheck: `npm run lint`
 | Default API URL | `http://172.18.221.31:8000` | [config.ts](file:///c:/Users/USER/Downloads/stockit/mobile/constants/config.ts#L7-L8) |
 | Hardcoded brand filter chips | All, Dell, HP, Apple, EPOS, Logitech | [InventoryScreen](file:///c:/Users/USER/Downloads/stockit/mobile/screens/InventoryScreen.tsx#L17) |
 | Gamification demo state | Level 4 Expert, 8/10 scans | [DashboardScreen](file:///c:/Users/USER/Downloads/stockit/mobile/screens/DashboardScreen.tsx#L73-L89) |
+
+---
+
+## Recent Improvements & New Features
+
+### Backend Enhancements
+1. **Dashboard KPIs System**: Implemented comprehensive dashboard metrics endpoint with real-time calculations
+2. **Movement Persistence Fix**: Resolved critical issue where inventory movements weren't being persisted to the database
+3. **Enhanced Inventory Service**: Added robust product resolution, stock adjustment, and transaction handling
+4. **Low Stock Alerts**: Dynamic alerting system for both product types and individual inventory items
+5. **API Endpoint Expansion**: Added new endpoints for inventory management, ticket creation, and movement tracking
+
+### Mobile App Improvements
+1. **ML Kit Integration**: Added on-device text recognition capabilities for improved OCR performance
+2. **Expo SDK 54 Upgrade**: Latest SDK with enhanced camera and barcode scanning features
+3. **Updated Technology Stack**: React 19.1.0, React Native 0.81.5, and TypeScript 5.9.2 for better performance and type safety
+4. **Enhanced API Integration**: Updated to use new backend endpoints for improved data accuracy
+
+### Data Model Improvements
+1. **Product Model Constraints**: Enforced 3-column product table structure for data integrity
+2. **Inventory Model Enhancements**: Added hybrid properties for backward compatibility
+3. **Movement Tracking**: Improved audit trail with proper timestamp and reference handling
+4. **Schema Validation**: Enhanced Pydantic schemas for better request/response validation
+
+### Bug Fixes
+1. **Fixed inventory_movements persistence**: Movements now properly written during stock operations
+2. **Resolved product endpoint issues**: Mobile app now uses correct inventory endpoints
+3. **Enhanced error handling**: Better transaction management and error recovery
+4. **Serial number handling**: Improved normalization and validation of various serial number formats
