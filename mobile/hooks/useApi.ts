@@ -6,6 +6,8 @@ import { historyApi } from '../api/history';
 import { notificationsApi } from '../api/notifications';
 import { purchaseOrdersApi } from '../api/purchaseOrders';
 import { suppliersApi } from '../api/suppliers';
+import { dashboardApi } from '../api/dashboard';
+import { inventoryApi } from '../api/inventory';
 import { aiApi } from '../api/ai';
 
 // ─── Products ─────────────────────────────────────────
@@ -40,11 +42,27 @@ export function useTicket(id: string) {
   });
 }
 
-// ─── History ──────────────────────────────────────────
-export function useHistory() {
+// ─── Inventory ────────────────────────────────────────
+export function useInventory(params?: { category?: string; brand?: string; search?: string }) {
   return useQuery({
-    queryKey: ['history'],
-    queryFn: historyApi.getAll,
+    queryKey: ['inventory', params],
+    queryFn: () => inventoryApi.getAll(params),
+  });
+}
+
+export function useInventoryItem(id: number) {
+  return useQuery({
+    queryKey: ['inventory', id],
+    queryFn: () => inventoryApi.getById(id),
+    enabled: !!id,
+  });
+}
+
+// ─── History ──────────────────────────────────────────
+export function useHistory(action?: 'IN' | 'OUT') {
+  return useQuery({
+    queryKey: ['history', action ?? 'all'],
+    queryFn: () => historyApi.getAll(action ? { action } : undefined),
   });
 }
 
@@ -81,6 +99,8 @@ export function useReceiveStock() {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['history'] });
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 }
@@ -93,7 +113,17 @@ export function useAssignStock() {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['history'] });
       queryClient.invalidateQueries({ queryKey: ['tickets'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
     },
+  });
+}
+
+// ─── Dashboard ────────────────────────────────────────
+export function useDashboard() {
+  return useQuery({
+    queryKey: ['dashboard'],
+    queryFn: dashboardApi.getKPIs,
   });
 }
 

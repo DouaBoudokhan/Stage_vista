@@ -1,90 +1,103 @@
 import React from 'react';
 import { StyleSheet, View, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
-import { Text, Avatar, Divider, ProgressBar, IconButton, useTheme } from 'react-native-paper';
+import { Text, IconButton } from 'react-native-paper';
 import { useAuth } from '../contexts/AuthContext';
-import { useProducts, useTickets, useHistory } from '../hooks/useApi';
+import { useDashboard, useHistory } from '../hooks/useApi';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
 import { StatisticCard, HistoryCard } from '../components/Cards';
 import { LoadingState, ErrorState } from '../components/FeedbackStates';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good Morning';
+  if (hour < 18) return 'Good Afternoon';
+  return 'Good Evening';
+}
+
 export default function DashboardScreen({ navigation }: any) {
   const { user } = useAuth();
-  const theme = useTheme();
-  
-  // React Query queries
-  const { data: products, isLoading: loadingProds, error: errorProds, refetch: refetchProds } = useProducts();
-  const { data: tickets, isLoading: loadingTickets, error: errorTickets, refetch: refetchTickets } = useTickets();
-  const { data: history, isLoading: loadingHistory, error: errorHistory, refetch: refetchHistory } = useHistory();
+
+  const { data: kpis, isLoading, error, refetch, isFetching } = useDashboard();
+  const { data: history, refetch: refetchHistory } = useHistory();
 
   const handleRefresh = async () => {
-    await Promise.all([refetchProds(), refetchTickets(), refetchHistory()]);
+    await Promise.all([refetch(), refetchHistory()]);
   };
 
-  const isLoading = loadingProds || loadingTickets || loadingHistory;
-  const hasError = errorProds || errorTickets || errorHistory;
-
   if (isLoading) {
-    return <LoadingState message="Connecting to FastAPI inventory telemetry..." />;
+    return <LoadingState message="Loading dashboard from database..." />;
   }
 
-  if (hasError) {
+  if (error || !kpis) {
     return (
-      <ErrorState 
-        description="FastAPI service is offline or authentication credentials expired." 
+      <ErrorState
+        description="Could not load dashboard KPIs from the FastAPI backend."
         onRetry={handleRefresh}
       />
     );
   }
 
-  // Calculate metrics
-  const totalStockQty = products?.reduce((acc, curr) => acc + curr.quantity, 0) ?? 0;
-  const totalValuation = products?.reduce((acc, curr) => acc + (curr.quantity * curr.price), 0) ?? 0;
-  const openTicketsCount = tickets?.filter(t => t.status !== 'Assigned').length ?? 0;
+  const categoryAlerts = kpis.lowStockAlerts.filter((a) => a.alertType === 'product_type');
+  const itemAlerts = kpis.lowStockAlerts.filter((a) => a.alertType === 'inventory_item');
 
   return (
-    <ScrollView 
-      style={styles.container} 
+    <ScrollView
+      style={styles.container}
       contentContainerStyle={styles.contentScroll}
       refreshControl={
-        <RefreshControl refreshing={false} onRefresh={handleRefresh} tintColor={Colors.primary} />
+        <RefreshControl refreshing={isFetching} onRefresh={handleRefresh} tintColor={Colors.primary} />
       }
     >
       {/* Welcome Header */}
       <View style={styles.headerRow}>
         <View>
-          <Text style={styles.greetingText}>Good Morning,</Text>
-          <Text style={styles.userNameText}>{user?.name?.split(' ')[0] ?? 'Mariem'}</Text>
+          <Text style={styles.greetingText}>{getGreeting()},</Text>
+          <Text style={styles.userNameText}>{user?.name?.split(' ')[0] ?? 'Technician'}</Text>
         </View>
         <View style={styles.headerRight}>
-          <IconButton 
-            icon="bell-outline" 
-            size={22} 
+          <IconButton
+            icon="bell-outline"
+            size={22}
             iconColor={Colors.textSecondary}
-            onPress={() => navigation.navigate('MainDrawer', { screen: 'DashboardTabs', params: { screen: 'Profile' } })} 
+            onPress={() =>
+              navigation.navigate('MainDrawer', {
+                screen: 'DashboardTabs',
+                params: { screen: 'Profile' },
+              })
+            }
           />
           <View style={styles.statusBadge}>
             <View style={styles.statusDot} />
-            <Text style={styles.statusText}>ONLINE</Text>
+            <Text style={styles.statusText}>LIVE</Text>
           </View>
         </View>
       </View>
 
-      {/* Gamification progress */}
-      <View style={styles.questCard}>
-        <View style={styles.questHeader}>
+      {/* Weekly activity from real movement data */}
+      <View style={styles.activityCard}>
+        <View style={styles.activityHeader}>
           <View>
-            <Text style={styles.questTag}>Weekly Achievements</Text>
-            <Text style={styles.questTitle}>Inspecteur Expert (Level 4)</Text>
+            <Text style={styles.activityTag}>This Week</Text>
+            <Text style={styles.activityTitle}>{kpis.movementsThisWeek} Stock Movements</Text>
           </View>
-          <MaterialCommunityIcons name="trophy" size={24} color={Colors.warning} />
+          <MaterialCommunityIcons name="chart-timeline-variant" size={24} color={Colors.primary} />
         </View>
-        <View style={styles.questBody}>
-          <View style={styles.questMeta}>
-            <Text style={styles.questGoal}>Scan 10 objects with AI</Text>
-            <Text style={styles.questCount}>8/10 Scans</Text>
+        <View style={styles.activityStatsRow}>
+          <View style={styles.activityStat}>
+            <Text style={styles.activityStatValue}>{kpis.stockInThisWeek}</Text>
+            <Text style={styles.activityStatLabel}>Received</Text>
           </View>
-          <ProgressBar progress={0.8} color={theme.colors.primary} style={styles.questProgress} />
+          <View style={styles.activityStatDivider} />
+          <View style={styles.activityStat}>
+            <Text style={styles.activityStatValue}>{kpis.stockOutThisWeek}</Text>
+            <Text style={styles.activityStatLabel}>Assigned</Text>
+          </View>
+          <View style={styles.activityStatDivider} />
+          <View style={styles.activityStat}>
+            <Text style={styles.activityStatValue}>{kpis.totalPurchaseOrders}</Text>
+            <Text style={styles.activityStatLabel}>POs</Text>
+          </View>
         </View>
       </View>
 
@@ -92,40 +105,85 @@ export default function DashboardScreen({ navigation }: any) {
       <View style={styles.statsGrid}>
         <StatisticCard
           title="Total Inventory"
-          value={`${totalStockQty} Items`}
-          subtitle={`€${totalValuation.toLocaleString()} Assets`}
+          value={`${kpis.totalInventoryQuantity} Units`}
+          subtitle={`${kpis.totalInventoryRecords} records`}
           icon="package-variant"
           iconColor={Colors.primary}
         />
         <StatisticCard
-          title="Critical Tickets"
-          value={openTicketsCount}
-          subtitle="Awaiting allocation"
+          title="Open Tickets"
+          value={kpis.openTickets}
+          subtitle={`${kpis.totalTickets} total`}
           icon="alert-circle-outline"
           iconColor={Colors.error}
         />
       </View>
 
-      {/* Quick Action buttons */}
-      <View style={styles.actionsSection}>
-        <Text style={styles.sectionHeader}>Technician Operations</Text>
-        <View style={styles.actionsGrid}>
-          <TouchableOpacity 
-            onPress={() => navigation.navigate('WorkflowReceive')}
-            style={[styles.actionBtn, { backgroundColor: Colors.primary }]}
-          >
-            <MaterialCommunityIcons name="arrow-down-left" size={26} color="#FFF" />
-            <Text style={styles.actionBtnText}>RECEIVE STOCK</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            onPress={() => navigation.navigate('WorkflowAssign')}
-            style={[styles.actionBtn, { backgroundColor: Colors.error }]}
-          >
-            <MaterialCommunityIcons name="arrow-up-right" size={26} color="#FFF" />
-            <Text style={styles.actionBtnText}>ASSIGN TICKET</Text>
-          </TouchableOpacity>
-        </View>
+      <View style={styles.statsGrid}>
+        <StatisticCard
+          title="Product Types"
+          value={kpis.activeProductTypes}
+          subtitle={`${kpis.totalProductTypes} categories`}
+          icon="shape-outline"
+          iconColor={Colors.success}
+        />
+        <StatisticCard
+          title="Low Stock Alerts"
+          value={categoryAlerts.length}
+          subtitle={
+            itemAlerts.length > 0
+              ? `${itemAlerts.length} SKU-level alert${itemAlerts.length === 1 ? '' : 's'}`
+              : `${kpis.totalProductTypes} categories tracked`
+          }
+          icon="alert-decagram-outline"
+          iconColor={Colors.warning}
+        />
       </View>
+
+      {/* Low stock alerts — all category-level alerts (never truncated) */}
+      {(categoryAlerts.length > 0 || itemAlerts.length > 0) && (
+        <View style={styles.alertsSection}>
+          <Text style={styles.sectionHeader}>Low Stock Alerts</Text>
+          {categoryAlerts.map((alert, index) => (
+            <View
+              key={`category-${alert.productType}-${index}`}
+              style={styles.alertRow}
+            >
+              <MaterialCommunityIcons
+                name={alert.severity === 'critical' ? 'alert-circle' : 'alert-outline'}
+                size={18}
+                color={alert.severity === 'critical' ? Colors.error : Colors.warning}
+              />
+              <View style={styles.alertTextBlock}>
+                <Text style={styles.alertTitle}>{alert.productType} category</Text>
+                <Text style={styles.alertMeta}>
+                  {alert.currentQuantity} units in stock (threshold: {alert.threshold})
+                </Text>
+              </View>
+            </View>
+          ))}
+          {itemAlerts.map((alert, index) => (
+            <View
+              key={`item-${alert.inventoryId ?? index}-${index}`}
+              style={styles.alertRow}
+            >
+              <MaterialCommunityIcons
+                name={alert.severity === 'critical' ? 'alert-circle' : 'alert-outline'}
+                size={18}
+                color={alert.severity === 'critical' ? Colors.error : Colors.warning}
+              />
+              <View style={styles.alertTextBlock}>
+                <Text style={styles.alertTitle}>
+                  {alert.productName ?? alert.articleNumber ?? 'Inventory item'}
+                </Text>
+                <Text style={styles.alertMeta}>
+                  {alert.currentQuantity} left (threshold: {alert.threshold}) • {alert.productType}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
 
       {/* Recent History log */}
       <View style={styles.historySection}>
@@ -135,14 +193,12 @@ export default function DashboardScreen({ navigation }: any) {
             <Text style={styles.viewAllText}>View All</Text>
           </TouchableOpacity>
         </View>
-        
+
         <View style={styles.historyList}>
           {history && history.length > 0 ? (
-            history.slice(0, 3).map((item) => (
-              <HistoryCard key={item.id} movement={item} />
-            ))
+            history.slice(0, 3).map((item) => <HistoryCard key={item.id} movement={item} />)
           ) : (
-            <Text style={styles.emptyHistoryText}>No recent movements logs available.</Text>
+            <Text style={styles.emptyHistoryText}>No recent movement logs available.</Text>
           )}
         </View>
       </View>
@@ -201,59 +257,66 @@ const styles = StyleSheet.create({
     color: Colors.success,
     letterSpacing: 0.5,
   },
-  questCard: {
+  activityCard: {
     backgroundColor: '#EEF2F6',
     borderRadius: BorderRadius.lg,
     padding: Spacing.md,
     marginBottom: Spacing.md,
   },
-  questHeader: {
+  activityHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
-  questTag: {
+  activityTag: {
     fontSize: 9,
     fontWeight: 'bold',
     color: Colors.primary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  questTitle: {
+  activityTitle: {
     fontSize: 13,
     fontWeight: 'bold',
     color: Colors.text,
     marginTop: 2,
   },
-  questBody: {
-    marginTop: Spacing.md,
-  },
-  questMeta: {
+  activityStatsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.xs,
+    marginTop: Spacing.md,
+    alignItems: 'center',
   },
-  questGoal: {
-    fontSize: 10,
-    color: Colors.textSecondary,
+  activityStat: {
+    flex: 1,
+    alignItems: 'center',
   },
-  questCount: {
-    fontSize: 10,
-    fontWeight: 'bold',
+  activityStatValue: {
+    fontSize: 16,
+    fontWeight: '900',
     color: Colors.text,
   },
-  questProgress: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: 'rgba(0,0,0,0.05)',
+  activityStatLabel: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  activityStatDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: 'rgba(0,0,0,0.08)',
   },
   statsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: Spacing.md,
   },
-  actionsSection: {
-    marginBottom: Spacing.lg,
+  alertsSection: {
+    backgroundColor: '#FFF',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
   },
   sectionHeader: {
     fontSize: 11,
@@ -263,29 +326,24 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
     letterSpacing: 0.5,
   },
-  actionsGrid: {
+  alertRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginTop: Spacing.sm,
   },
-  actionBtn: {
+  alertTextBlock: {
     flex: 1,
-    marginHorizontal: 4,
-    height: 70,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    marginLeft: Spacing.sm,
   },
-  actionBtnText: {
-    color: '#FFF',
-    fontSize: 10,
+  alertTitle: {
+    fontSize: 12,
     fontWeight: 'bold',
-    letterSpacing: 0.5,
-    marginTop: 4,
+    color: Colors.text,
+  },
+  alertMeta: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+    marginTop: 2,
   },
   historySection: {
     marginBottom: Spacing.xl,

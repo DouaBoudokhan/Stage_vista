@@ -1,7 +1,49 @@
 """Inventory and Ticket Schemas"""
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
+
+
+class InventoryItem(BaseModel):
+    """Single row from the inventory table (current on-hand stock)."""
+
+    id: int
+    product_id: int
+    category: Optional[str] = None
+    brand: str
+    product_name: str
+    article_number: str
+    serial_number: Optional[str] = None
+    quantity_available: int
+    status: str
+    received_by: str
+    received_at: Optional[datetime] = None
+    purchase_order_id: Optional[int] = None
+    po_number: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class StockHistoryRecord(BaseModel):
+    """Unified stock-in / stock-out event from audit tables."""
+
+    id: str
+    source_table: str  # stock_entries | stock_exits | inventory_movements
+    source_id: int
+    action: str  # IN | OUT
+    inventory_id: Optional[int] = None
+    product_name: Optional[str] = None
+    article_number: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    quantity: int
+    technician: str
+    timestamp: datetime
+    po_number: Optional[str] = None
+    ticket_id: Optional[str] = None
+    reference: Optional[str] = None
+    notes: Optional[str] = None
 
 
 class InventoryMovementBase(BaseModel):

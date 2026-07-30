@@ -1,7 +1,8 @@
 """Inventory Service for Stock Entry Workflow"""
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
+from sqlalchemy import func as sa_func
 from ..models.inventory import Inventory, InventoryMovement, Ticket
 from ..models.stock_entry import StockEntry
 from ..models.stock_exit import StockExit
@@ -24,6 +25,11 @@ _PRODUCT_TYPE_NORMALIZE = {
     "HEADPHONE": "Headset",
     "AUDIO": "Headset",
 }
+
+
+# Low-stock thresholds — alerts are computed live from DB quantities vs these values.
+PRODUCT_TYPE_LOW_STOCK_THRESHOLD = 5
+INVENTORY_ITEM_LOW_STOCK_THRESHOLD = 2
 
 
 class InventoryService:
@@ -843,6 +849,206 @@ class InventoryService:
 
         return query.limit(limit).all()
 
+    def list_inventory_items(
+        self,
+        db: Session,
+        *,
+        category: Optional[str] = None,
+        brand: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Return all inventory rows joined with product type and PO number."""
+        query = (
+            db.query(Inventory, Product.product_type, PurchaseOrder.po_number)
+            .join(Product, Inventory.product_id == Product.id)
+            .outerjoin(PurchaseOrder, Inventory.purchase_order_id == PurchaseOrder.id)
+            .order_by(Inventory.received_at.desc())
+        )
+
+        if category:
+            query = query.filter(Product.product_type.ilike(f"%{category}%"))
+        if brand:
+            query = query.filter(Inventory.brand.ilike(f"%{brand}%"))
+        if search:
+            term = f"%{search.strip()}%"
+            query = query.filter(
+                (Inventory.product_name.ilike(term))
+                | (Inventory.article_number.ilike(term))
+                | (Inventory.serial_number.ilike(term))
+                | (Inventory.brand.ilike(term))
+                | (Product.product_type.ilike(term))
+            )
+
+        rows = query.limit(limit).all()
+        return [
+            {
+                "id": inv.id,
+                "product_id": inv.product_id,
+                "category": product_type,
+                "brand": inv.brand,
+                "product_name": inv.product_name,
+                "article_number": inv.article_number,
+                "serial_number": inv.serial_number,
+                "quantity_available": inv.quantity_available,
+                "status": inv.status,
+                "received_by": inv.received_by,
+                "received_at": inv.received_at,
+                "purchase_order_id": inv.purchase_order_id,
+                "po_number": po_number,
+            }
+            for inv, product_type, po_number in rows
+        ]
+
+    def get_inventory_item(self, db: Session, inventory_id: int) -> Optional[Dict[str, Any]]:
+        """Return a single inventory row with joins."""
+        row = (
+            db.query(Inventory, Product.product_type, PurchaseOrder.po_number)
+            .join(Product, Inventory.product_id == Product.id)
+            .outerjoin(PurchaseOrder, Inventory.purchase_order_id == PurchaseOrder.id)
+            .filter(Inventory.id == inventory_id)
+            .first()
+        )
+        if not row:
+            return None
+        inv, product_type, po_number = row
+        return {
+            "id": inv.id,
+            "product_id": inv.product_id,
+            "category": product_type,
+            "brand": inv.brand,
+            "product_name": inv.product_name,
+            "article_number": inv.article_number,
+            "serial_number": inv.serial_number,
+            "quantity_available": inv.quantity_available,
+            "status": inv.status,
+            "received_by": inv.received_by,
+            "received_at": inv.received_at,
+            "purchase_order_id": inv.purchase_order_id,
+            "po_number": po_number,
+        }
+
+    def get_stock_history(
+        self,
+        db: Session,
+        *,
+        limit: int = 100,
+        action: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Unified stock activity timeline.
+
+        Primary sources (audit tables with inventory FK):
+          - stock_entries  → every stock-in (receive workflow)
+          - stock_exits    → every stock-out (assign workflow)
+
+        Fallback:
+          - inventory_movements → legacy/mobile feed rows if audit tables are empty
+
+        inventory_movements is the operational activity log (denormalized, UI-friendly).
+        stock_entries / stock_exits are the relational audit trail per inventory row.
+        Both are written on receive/assign; history reads audit tables first.
+        """
+        records: List[Dict[str, Any]] = []
+
+        entry_rows = (
+            db.query(StockEntry, Inventory, Product.product_type, PurchaseOrder.po_number)
+            .outerjoin(Inventory, StockEntry.inventory_id == Inventory.id)
+            .outerjoin(Product, Inventory.product_id == Product.id)
+            .outerjoin(PurchaseOrder, Inventory.purchase_order_id == PurchaseOrder.id)
+            .order_by(StockEntry.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        for entry, inv, product_type, po_number in entry_rows:
+            records.append(
+                {
+                    "id": f"SE-{entry.id}",
+                    "source_table": "stock_entries",
+                    "source_id": entry.id,
+                    "action": "IN",
+                    "inventory_id": entry.inventory_id,
+                    "product_name": inv.product_name if inv else None,
+                    "article_number": inv.article_number if inv else None,
+                    "brand": inv.brand if inv else None,
+                    "category": product_type,
+                    "quantity": entry.quantity_received,
+                    "technician": entry.created_by,
+                    "timestamp": entry.created_at,
+                    "po_number": po_number,
+                    "ticket_id": None,
+                    "reference": inv.article_number if inv else None,
+                    "notes": f"Stock entry #{entry.id}",
+                }
+            )
+
+        exit_rows = (
+            db.query(StockExit, Inventory, Product.product_type, PurchaseOrder.po_number)
+            .outerjoin(Inventory, StockExit.inventory_id == Inventory.id)
+            .outerjoin(Product, Inventory.product_id == Product.id)
+            .outerjoin(PurchaseOrder, Inventory.purchase_order_id == PurchaseOrder.id)
+            .order_by(StockExit.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        for exit_row, inv, product_type, po_number in exit_rows:
+            records.append(
+                {
+                    "id": f"SX-{exit_row.id}",
+                    "source_table": "stock_exits",
+                    "source_id": exit_row.id,
+                    "action": "OUT",
+                    "inventory_id": exit_row.inventory_id,
+                    "product_name": inv.product_name if inv else None,
+                    "article_number": inv.article_number if inv else None,
+                    "brand": inv.brand if inv else None,
+                    "category": product_type,
+                    "quantity": exit_row.quantity,
+                    "technician": exit_row.created_by,
+                    "timestamp": exit_row.created_at,
+                    "po_number": po_number,
+                    "ticket_id": exit_row.ticket_number,
+                    "reference": inv.article_number if inv else None,
+                    "notes": f"Stock exit #{exit_row.id} • ticket {exit_row.ticket_number}",
+                }
+            )
+
+        if not records:
+            movement_rows = (
+                db.query(InventoryMovement)
+                .order_by(InventoryMovement.timestamp.desc())
+                .limit(limit)
+                .all()
+            )
+            for mov in movement_rows:
+                records.append(
+                    {
+                        "id": mov.id,
+                        "source_table": "inventory_movements",
+                        "source_id": 0,
+                        "action": mov.action,
+                        "inventory_id": None,
+                        "product_name": mov.product_name,
+                        "article_number": mov.reference,
+                        "brand": None,
+                        "category": None,
+                        "quantity": mov.quantity,
+                        "technician": mov.user,
+                        "timestamp": mov.timestamp,
+                        "po_number": mov.po_id,
+                        "ticket_id": mov.ticket_id,
+                        "reference": mov.reference,
+                        "notes": mov.notes,
+                    }
+                )
+
+        if action:
+            action_upper = action.upper()
+            records = [r for r in records if r["action"] == action_upper]
+
+        records.sort(key=lambda r: r["timestamp"] or datetime.min, reverse=True)
+        return records[:limit]
+
     def get_inventory_summary(self, db: Session) -> Dict[str, Any]:
         """Inventory summary statistics (uses Products.product_type for category distribution when possible)."""
         try:
@@ -881,6 +1087,177 @@ class InventoryService:
                 "success": False,
                 "message": f"Failed to get inventory summary: {str(e)}",
             }
+
+    def get_dashboard_kpis(self, db: Session) -> Dict[str, Any]:
+        """Compute live dashboard KPIs from inventory, products, tickets, and movements."""
+        now = datetime.utcnow()
+        week_ago = now - timedelta(days=7)
+
+        total_inventory_records = db.query(Inventory).count()
+        total_inventory_quantity = int(
+            db.query(sa_func.coalesce(sa_func.sum(Inventory.quantity_available), 0)).scalar() or 0
+        )
+
+        total_product_types = db.query(Product).count()
+        active_product_types = (
+            db.query(Product).filter(Product.stock_on_hand > 0).count()
+        )
+
+        total_tickets = db.query(Ticket).count()
+        open_tickets = (
+            db.query(Ticket)
+            .filter(Ticket.status.notin_(["Assigned", "Closed"]))
+            .count()
+        )
+        fulfilled_tickets = total_tickets - open_tickets
+        ticket_fulfillment_rate = (
+            round((fulfilled_tickets / total_tickets) * 100, 1) if total_tickets > 0 else 0.0
+        )
+
+        total_purchase_orders = db.query(PurchaseOrder).count()
+
+        movements_this_week = (
+            db.query(InventoryMovement)
+            .filter(InventoryMovement.timestamp >= week_ago)
+            .count()
+        )
+        stock_in_this_week = int(
+            db.query(sa_func.coalesce(sa_func.sum(InventoryMovement.quantity), 0))
+            .filter(
+                InventoryMovement.timestamp >= week_ago,
+                InventoryMovement.action == "IN",
+            )
+            .scalar()
+            or 0
+        )
+        stock_out_this_week = int(
+            db.query(sa_func.coalesce(sa_func.sum(InventoryMovement.quantity), 0))
+            .filter(
+                InventoryMovement.timestamp >= week_ago,
+                InventoryMovement.action == "OUT",
+            )
+            .scalar()
+            or 0
+        )
+
+        status_distribution: Dict[str, int] = {}
+        for (status,) in db.query(Inventory.status).distinct().all():
+            status_distribution[status] = (
+                db.query(Inventory).filter(Inventory.status == status).count()
+            )
+
+        product_rows = db.query(Product).all()
+        type_order = {pt: idx for idx, pt in enumerate(VALID_PRODUCT_TYPES)}
+        sorted_products = sorted(
+            product_rows,
+            key=lambda p: type_order.get(p.product_type, 999),
+        )
+
+        category_stock: List[Dict[str, Any]] = []
+        for product in sorted_products:
+            inventory_records = (
+                db.query(Inventory).filter(Inventory.product_id == product.id).count()
+            )
+            share_percent = (
+                round((product.stock_on_hand / total_inventory_quantity) * 100, 1)
+                if total_inventory_quantity > 0
+                else 0.0
+            )
+            category_stock.append(
+                {
+                    "product_type": product.product_type,
+                    "stock_on_hand": product.stock_on_hand or 0,
+                    "inventory_records": inventory_records,
+                    "share_percent": share_percent,
+                }
+            )
+
+        low_stock_alerts: List[Dict[str, Any]] = []
+
+        for product in sorted_products:
+            qty = product.stock_on_hand or 0
+            if qty <= PRODUCT_TYPE_LOW_STOCK_THRESHOLD:
+                low_stock_alerts.append(
+                    {
+                        "alert_type": "product_type",
+                        "product_type": product.product_type,
+                        "product_name": None,
+                        "article_number": None,
+                        "inventory_id": None,
+                        "current_quantity": qty,
+                        "threshold": PRODUCT_TYPE_LOW_STOCK_THRESHOLD,
+                        "severity": "critical" if qty == 0 else "warning",
+                    }
+                )
+
+        low_inventory_items = (
+            db.query(Inventory, Product.product_type)
+            .join(Product, Inventory.product_id == Product.id)
+            .filter(
+                Inventory.quantity_available <= INVENTORY_ITEM_LOW_STOCK_THRESHOLD,
+                Inventory.quantity_available > 0,
+            )
+            .order_by(Inventory.quantity_available.asc())
+            .limit(20)
+            .all()
+        )
+        for inv, product_type in low_inventory_items:
+            low_stock_alerts.append(
+                {
+                    "alert_type": "inventory_item",
+                    "product_type": product_type,
+                    "product_name": inv.product_name,
+                    "article_number": inv.article_number,
+                    "inventory_id": inv.id,
+                    "current_quantity": inv.quantity_available,
+                    "threshold": INVENTORY_ITEM_LOW_STOCK_THRESHOLD,
+                    "severity": "warning",
+                }
+            )
+
+        out_of_stock_items = (
+            db.query(Inventory, Product.product_type)
+            .join(Product, Inventory.product_id == Product.id)
+            .filter(Inventory.quantity_available == 0)
+            .order_by(Inventory.received_at.desc())
+            .limit(10)
+            .all()
+        )
+        for inv, product_type in out_of_stock_items:
+            low_stock_alerts.append(
+                {
+                    "alert_type": "inventory_item",
+                    "product_type": product_type,
+                    "product_name": inv.product_name,
+                    "article_number": inv.article_number,
+                    "inventory_id": inv.id,
+                    "current_quantity": 0,
+                    "threshold": INVENTORY_ITEM_LOW_STOCK_THRESHOLD,
+                    "severity": "critical",
+                }
+            )
+
+        category_alert_count = sum(
+            1 for a in low_stock_alerts if a["alert_type"] == "product_type"
+        )
+
+        return {
+            "total_inventory_quantity": total_inventory_quantity,
+            "total_inventory_records": total_inventory_records,
+            "total_product_types": total_product_types,
+            "active_product_types": active_product_types,
+            "open_tickets": open_tickets,
+            "total_tickets": total_tickets,
+            "ticket_fulfillment_rate": ticket_fulfillment_rate,
+            "movements_this_week": movements_this_week,
+            "stock_in_this_week": stock_in_this_week,
+            "stock_out_this_week": stock_out_this_week,
+            "total_purchase_orders": total_purchase_orders,
+            "low_stock_alert_count": category_alert_count,
+            "low_stock_alerts": low_stock_alerts,
+            "category_stock": category_stock,
+            "status_distribution": status_distribution,
+        }
 
 
 # Global instance

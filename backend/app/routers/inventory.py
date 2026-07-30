@@ -9,12 +9,21 @@ from ..models.inventory import InventoryMovement, Ticket
 from ..schemas.inventory import (
     InventoryMovement as MovementSchema,
     StockIn, StockOut,
-    Ticket as TicketSchema, TicketCreate
+    Ticket as TicketSchema, TicketCreate,
+    InventoryItem, StockHistoryRecord,
 )
+from ..schemas.dashboard import DashboardKPIs
 from ..services.inventory_service import inventory_service
 import uuid
 
 router = APIRouter(prefix="", tags=["inventory"])
+
+
+# Dashboard
+@router.get("/dashboard/kpis", response_model=DashboardKPIs)
+async def get_dashboard_kpis(db: Session = Depends(get_db)):
+    """Live dashboard KPIs calculated from inventory, products, tickets, and movements."""
+    return inventory_service.get_dashboard_kpis(db)
 
 
 # Stock Operations
@@ -73,17 +82,62 @@ async def assign_stock(
         )
 
 
+# Inventory reads
+@router.get("/inventory", response_model=List[InventoryItem])
+async def list_inventory(
+    db: Session = Depends(get_db),
+    category: str = None,
+    brand: str = None,
+    search: str = None,
+    limit: int = 200,
+):
+    """List all inventory rows (current on-hand stock)."""
+    return inventory_service.list_inventory_items(
+        db,
+        category=category,
+        brand=brand,
+        search=search,
+        limit=limit,
+    )
+
+
+@router.get("/inventory/{inventory_id}", response_model=InventoryItem)
+async def get_inventory_item(inventory_id: int, db: Session = Depends(get_db)):
+    """Get a single inventory row by primary key."""
+    item = inventory_service.get_inventory_item(db, inventory_id)
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Inventory item {inventory_id} not found",
+        )
+    return item
+
+
 # History
-@router.get("/history", response_model=List[MovementSchema])
+@router.get("/history", response_model=List[StockHistoryRecord])
 async def get_history(
     db: Session = Depends(get_db),
-    limit: int = 50
+    limit: int = 100,
+    action: str = None,
 ):
-    """Get inventory movement history"""
+    """
+    Stock activity from audit tables (stock_entries + stock_exits).
+
+    Optional action filter: IN (received) or OUT (assigned/taken out).
+    Falls back to inventory_movements when audit tables have no rows yet.
+    """
+    return inventory_service.get_stock_history(db, limit=limit, action=action)
+
+
+@router.get("/history/movements", response_model=List[MovementSchema])
+async def get_movement_feed(
+    db: Session = Depends(get_db),
+    limit: int = 50,
+):
+    """Raw inventory_movements feed (operational log, separate from audit tables)."""
     movements = db.query(InventoryMovement).order_by(
         InventoryMovement.timestamp.desc()
     ).limit(limit).all()
-    
     return movements
 
 

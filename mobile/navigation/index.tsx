@@ -33,7 +33,7 @@ export type RootStackParamList = {
   Splash: undefined;
   Login: undefined;
   MainTabs: undefined;
-  ProductDetails: { productId: string };
+  ProductDetails: { inventoryId: number };
   WorkflowSelection: undefined;
   WorkflowReceive: undefined;
   WorkflowAssign: undefined;

@@ -4,7 +4,58 @@ import { Card, Text, Surface, useTheme } from 'react-native-paper';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
 import { PRODUCT_ICONS, PRIORITY_COLORS } from '../constants/config';
 import type { Product, HistoryMovement, Ticket } from '../types';
+import type { InventoryItem } from '../api/inventory';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+
+// ─── Inventory Item Card (real DB row) ────────────────
+interface InventoryItemCardProps {
+  item: InventoryItem;
+  onPress: () => void;
+  isGrid?: boolean;
+}
+
+export const InventoryItemCard: React.FC<InventoryItemCardProps> = ({ item, onPress, isGrid = true }) => {
+  const emoji = PRODUCT_ICONS[item.category ?? ''] || PRODUCT_ICONS.Default;
+  const isLow = item.quantityAvailable <= 2;
+
+  if (isGrid) {
+    return (
+      <Card onPress={onPress} style={styles.gridCard} contentStyle={{ flex: 1 }}>
+        <Card.Content style={styles.gridContent}>
+          <Text style={styles.emojiVisual}>{emoji}</Text>
+          <Text style={styles.cardTitle} numberOfLines={2}>{item.productName}</Text>
+          <Text style={styles.cardRef} numberOfLines={1}>{item.articleNumber}</Text>
+          <Text style={styles.cardRef} numberOfLines={1}>{item.brand} • {item.category}</Text>
+          <View style={styles.cardFooter}>
+            <Text style={styles.cardQty}>Qty: {item.quantityAvailable}</Text>
+            <View style={[styles.statusBadge, isLow ? styles.statusBadgeLow : styles.statusBadgeOk]}>
+              <Text style={[styles.statusBadgeText, isLow ? styles.statusBadgeTextLow : styles.statusBadgeTextOk]}>
+                {isLow ? 'Low' : item.status}
+              </Text>
+            </View>
+          </View>
+        </Card.Content>
+      </Card>
+    );
+  }
+
+  return (
+    <Card onPress={onPress} style={styles.listCard}>
+      <Card.Content style={styles.listContent}>
+        <Text style={styles.emojiVisualList}>{emoji}</Text>
+        <View style={styles.listTextSection}>
+          <Text style={styles.cardTitle} numberOfLines={1}>{item.productName}</Text>
+          <Text style={styles.cardRef}>{item.articleNumber} • {item.brand}</Text>
+          <Text style={styles.cardRef}>{item.category}{item.poNumber ? ` • PO ${item.poNumber}` : ''}</Text>
+        </View>
+        <View style={styles.listRightSection}>
+          <Text style={styles.listCardQty}>Qty: {item.quantityAvailable}</Text>
+          <Text style={styles.listCardPrice}>{item.status}</Text>
+        </View>
+      </Card.Content>
+    </Card>
+  );
+};
 
 // ─── Product Card ─────────────────────────────────────
 interface ProductCardProps {
@@ -68,27 +119,32 @@ interface HistoryCardProps {
 
 export const HistoryCard: React.FC<HistoryCardProps> = ({ movement }) => {
   const isReceive = movement.type === 'Receive';
+  const label = isReceive ? 'Received' : movement.type === 'Assign' ? 'Taken out' : movement.type;
   return (
     <Card style={styles.historyCard}>
       <Card.Content style={styles.historyContent}>
         <View style={[styles.historyIconBox, { backgroundColor: isReceive ? '#ECFDF5' : '#FEF2F2' }]}>
-          <MaterialCommunityIcons 
-            name={isReceive ? 'arrow-down-left' : 'arrow-up-right'} 
-            size={20} 
-            color={isReceive ? Colors.success : Colors.error} 
+          <MaterialCommunityIcons
+            name={isReceive ? 'arrow-down-left' : 'arrow-up-right'}
+            size={20}
+            color={isReceive ? Colors.success : Colors.error}
           />
         </View>
         <View style={styles.historyTextSection}>
           <View style={styles.historyHeader}>
             <Text style={styles.historyTitle}>{movement.productName}</Text>
-            <Text style={styles.historyQty}>Qty: {movement.quantity}</Text>
+            <Text style={[styles.historyQty, { color: isReceive ? Colors.success : Colors.error }]}>
+              {label} • {movement.quantity}
+            </Text>
           </View>
           <Text style={styles.historyMeta}>
-            by {movement.technician} • {new Date(movement.date).toLocaleDateString()}
+            by {movement.technician} • {new Date(movement.date).toLocaleString()}
           </Text>
-          <Text style={styles.historyComment} numberOfLines={2}>
-            {movement.comment}
-          </Text>
+          {movement.comment ? (
+            <Text style={styles.historyComment} numberOfLines={2}>
+              {movement.comment}
+            </Text>
+          ) : null}
         </View>
       </Card.Content>
     </Card>

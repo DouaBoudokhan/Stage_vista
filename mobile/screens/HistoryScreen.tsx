@@ -1,54 +1,77 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, FlatList } from 'react-native';
-import { TextInput, Appbar, useTheme } from 'react-native-paper';
+import { StyleSheet, View, FlatList, TouchableOpacity } from 'react-native';
+import { TextInput, Text, useTheme } from 'react-native-paper';
 import { useHistory } from '../hooks/useApi';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
 import { HistoryCard } from '../components/Cards';
 import { LoadingState, EmptyState } from '../components/FeedbackStates';
 
-export default function HistoryScreen({ navigation }: any) {
-  const { data: history, isLoading, error, refetch } = useHistory();
-  const [searchQuery, setSearchQuery] = useState('');
+type HistoryFilter = 'all' | 'IN' | 'OUT';
+
+export default function HistoryScreen() {
   const theme = useTheme();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filter, setFilter] = useState<HistoryFilter>('all');
+
+  const actionParam = filter === 'all' ? undefined : filter;
+  const { data: history, isLoading, error, refetch, isFetching } = useHistory(actionParam);
 
   if (isLoading) {
-    return <LoadingState message="Connecting to transaction logs audit..." />;
+    return <LoadingState message="Loading stock history from database..." />;
   }
 
   if (error) {
     return (
-      <EmptyState 
-        title="Failed to Sync Logs" 
-        description="Could not download activity timeline from FastAPI audit registry."
+      <EmptyState
+        title="Failed to load history"
+        description="Could not fetch stock_entries / stock_exits from the FastAPI backend."
         icon="wifi-off"
       />
     );
   }
 
-  // Filter logs by search query
-  const filteredHistory = history?.filter((h) => {
-    return (
-      h.productName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      h.comment.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      h.technician.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      h.type.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }) ?? [];
+  const filteredHistory =
+    history?.filter((h) => {
+      const q = searchQuery.toLowerCase();
+      return (
+        h.productName.toLowerCase().includes(q) ||
+        h.comment.toLowerCase().includes(q) ||
+        h.technician.toLowerCase().includes(q) ||
+        h.type.toLowerCase().includes(q) ||
+        (h.poId ?? '').toLowerCase().includes(q)
+      );
+    }) ?? [];
+
+  const filters: { key: HistoryFilter; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'IN', label: 'Received' },
+    { key: 'OUT', label: 'Taken out' },
+  ];
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <Appbar.Header style={{ backgroundColor: theme.colors.surface }}>
-        <Appbar.Action icon="menu" onPress={() => navigation.openDrawer()} />
-        <Appbar.Content title="Inventory Logs System" titleStyle={styles.headerTitle} />
-        <Appbar.Action icon="refresh" onPress={refetch} />
-      </Appbar.Header>
+      <View style={styles.filterRow}>
+        {filters.map((f) => {
+          const active = filter === f.key;
+          return (
+            <TouchableOpacity
+              key={f.key}
+              onPress={() => setFilter(f.key)}
+              style={[
+                styles.filterChip,
+                active && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+              ]}
+            >
+              <Text style={[styles.filterChipText, active && { color: '#FFF' }]}>{f.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
-      {/* Search Input */}
       <View style={styles.searchSection}>
         <TextInput
           mode="outlined"
-          placeholder="Filter logs by technician, comment, SKU..."
+          placeholder="Filter by product, technician, PO..."
           value={searchQuery}
           onChangeText={setSearchQuery}
           style={styles.searchBar}
@@ -63,20 +86,27 @@ export default function HistoryScreen({ navigation }: any) {
         />
       </View>
 
-      {/* Logs List */}
+      <Text style={styles.hintText}>
+        Received = stock_entries • Taken out = stock_exits (when assign workflow runs)
+      </Text>
+
       <FlatList
         data={filteredHistory}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => <HistoryCard movement={item} />}
         contentContainerStyle={styles.listContainer}
         ListEmptyComponent={
-          <EmptyState 
-            title="No Movements Found" 
-            description="The search keywords matched no entries in the transaction audit trail."
+          <EmptyState
+            title={filter === 'OUT' ? 'No stock taken out yet' : 'No movements found'}
+            description={
+              filter === 'OUT'
+                ? 'Stock exits appear here after Workflow 2 (Assign) is used.'
+                : 'Receive stock via Workflow 1 to see entries here.'
+            }
             icon="card-bulleted-off-outline"
           />
         }
-        refreshing={false}
+        refreshing={isFetching}
         onRefresh={refetch}
       />
     </View>
@@ -88,14 +118,28 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  headerTitle: {
-    fontSize: 16,
+  filterRow: {
+    flexDirection: 'row',
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
+    gap: 8,
+  },
+  filterChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.full,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  filterChipText: {
+    fontSize: 11,
     fontWeight: 'bold',
+    color: Colors.textSecondary,
   },
   searchSection: {
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.sm,
-    backgroundColor: '#FFF',
   },
   searchBar: {
     backgroundColor: '#FFF',
@@ -103,6 +147,13 @@ const styles = StyleSheet.create({
   searchBarOutline: {
     borderRadius: BorderRadius.md,
     borderColor: Colors.border,
+  },
+  hintText: {
+    fontSize: 9,
+    color: Colors.textSecondary,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.xs,
+    fontStyle: 'italic',
   },
   listContainer: {
     padding: Spacing.md,

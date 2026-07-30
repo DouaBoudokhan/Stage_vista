@@ -1,59 +1,127 @@
 import React from 'react';
-import { StyleSheet, View, ScrollView } from 'react-native';
+import { StyleSheet, View, ScrollView, RefreshControl } from 'react-native';
 import { Text, Surface, ProgressBar, useTheme } from 'react-native-paper';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
 import { StatisticCard } from '../components/Cards';
+import { useDashboard } from '../hooks/useApi';
+import { LoadingState, ErrorState } from '../components/FeedbackStates';
 
 export default function ReportsScreen() {
   const theme = useTheme();
+  const { data: kpis, isLoading, error, refetch, isFetching } = useDashboard();
+
+  if (isLoading) {
+    return <LoadingState message="Loading analytics from database..." />;
+  }
+
+  if (error || !kpis) {
+    return (
+      <ErrorState
+        description="Could not load analytics reports from the FastAPI backend."
+        onRetry={refetch}
+      />
+    );
+  }
+
+  const sortedCategories = [...kpis.categoryStock].sort(
+    (a, b) => b.stockOnHand - a.stockOnHand,
+  );
+  const maxStock = sortedCategories[0]?.stockOnHand ?? 1;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      refreshControl={
+        <RefreshControl refreshing={isFetching} onRefresh={refetch} tintColor={Colors.primary} />
+      }
+    >
       <Text style={styles.sectionHeader}>Analytics Reports Overview</Text>
 
       <View style={styles.statsGrid}>
         <StatisticCard
-          title="Total Valuation"
-          value="€28,500"
-          subtitle="Enterprise IT assets"
-          icon="currency-eur"
+          title="Total Inventory"
+          value={`${kpis.totalInventoryQuantity} Units`}
+          subtitle={`${kpis.totalInventoryRecords} SKU records`}
+          icon="package-variant"
           iconColor={Colors.primary}
         />
         <StatisticCard
-          title="Fulfillment Rate"
-          value="94.2%"
-          subtitle="PO received vs requested"
+          title="Ticket Fulfillment"
+          value={`${kpis.ticketFulfillmentRate}%`}
+          subtitle={`${kpis.openTickets} open of ${kpis.totalTickets}`}
           icon="chart-donut"
           iconColor={Colors.success}
         />
       </View>
 
-      <Text style={styles.sectionHeader}>Category Allocations</Text>
+      <View style={styles.statsGrid}>
+        <StatisticCard
+          title="Low Stock Alerts"
+          value={kpis.lowStockAlertCount}
+          subtitle="Computed from live stock"
+          icon="alert-decagram-outline"
+          iconColor={Colors.warning}
+        />
+        <StatisticCard
+          title="Weekly Movements"
+          value={kpis.movementsThisWeek}
+          subtitle={`${kpis.stockInThisWeek} in / ${kpis.stockOutThisWeek} out`}
+          icon="swap-vertical"
+          iconColor={Colors.primary}
+        />
+      </View>
+
+      <Text style={styles.sectionHeader}>Stock by Product Type</Text>
       <Surface style={styles.card} elevation={1}>
-        <View style={styles.barRow}>
-          <View style={styles.barLabelRow}>
-            <Text style={styles.barLabel}>Laptops & Workstations</Text>
-            <Text style={styles.barVal}>18 left (65%)</Text>
-          </View>
-          <ProgressBar progress={0.65} color={theme.colors.primary} style={styles.bar} />
-        </View>
-
-        <View style={styles.barRow}>
-          <View style={styles.barLabelRow}>
-            <Text style={styles.barLabel}>Audio & Headsets</Text>
-            <Text style={styles.barVal}>20 left (85%)</Text>
-          </View>
-          <ProgressBar progress={0.85} color={theme.colors.primary} style={styles.bar} />
-        </View>
-
-        <View style={styles.barRow}>
-          <View style={styles.barLabelRow}>
-            <Text style={styles.barLabel}>Networking Equipment</Text>
-            <Text style={styles.barVal}>1 left (10%)</Text>
-          </View>
-          <ProgressBar progress={0.1} color={Colors.error} style={styles.bar} />
-        </View>
+        {sortedCategories.length > 0 ? (
+          sortedCategories.map((category) => {
+            const progress = maxStock > 0 ? category.stockOnHand / maxStock : 0;
+            const isLow = category.stockOnHand <= 5;
+            return (
+              <View key={category.productType} style={styles.barRow}>
+                <View style={styles.barLabelRow}>
+                  <Text style={styles.barLabel}>{category.productType}</Text>
+                  <Text style={styles.barVal}>
+                    {category.stockOnHand} units ({category.sharePercent}%)
+                  </Text>
+                </View>
+                <ProgressBar
+                  progress={progress}
+                  color={isLow ? Colors.error : theme.colors.primary}
+                  style={styles.bar}
+                />
+                <Text style={styles.barMeta}>
+                  {category.inventoryRecords} inventory record
+                  {category.inventoryRecords === 1 ? '' : 's'}
+                </Text>
+              </View>
+            );
+          })
+        ) : (
+          <Text style={styles.emptyText}>No inventory data available yet.</Text>
+        )}
       </Surface>
+
+      {kpis.lowStockAlerts.length > 0 && (
+        <>
+          <Text style={styles.sectionHeader}>Low Stock Alerts</Text>
+          <Surface style={styles.card} elevation={1}>
+            {kpis.lowStockAlerts.map((alert, index) => (
+              <View key={`${alert.alertType}-${alert.inventoryId ?? alert.productType}-${index}`} style={styles.alertRow}>
+                <Text style={styles.alertLabel}>
+                  {alert.alertType === 'product_type'
+                    ? `${alert.productType} (category)`
+                    : alert.productName ?? alert.articleNumber ?? `Item #${alert.inventoryId}`}
+                </Text>
+                <Text style={[styles.alertQty, alert.severity === 'critical' && styles.alertQtyCritical]}>
+                  {alert.currentQuantity} / threshold {alert.threshold}
+                </Text>
+              </View>
+            ))}
+          </Surface>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -104,8 +172,42 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     color: Colors.textSecondary,
   },
+  barMeta: {
+    fontSize: 9,
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
   bar: {
     height: 8,
     borderRadius: 4,
+  },
+  alertRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: Spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  alertLabel: {
+    flex: 1,
+    fontSize: 11,
+    color: Colors.text,
+    marginRight: Spacing.sm,
+  },
+  alertQty: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: Colors.warning,
+  },
+  alertQtyCritical: {
+    color: Colors.error,
+  },
+  emptyText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: Spacing.md,
   },
 });

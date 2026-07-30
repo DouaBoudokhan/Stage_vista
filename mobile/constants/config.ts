@@ -32,6 +32,7 @@ export const PRODUCT_ICONS: Record<string, string> = {
   Monitor: '🖥️',
   Mouse: '🖱️',
   Headset: '🎧',
+  Keyboard: '⌨️',
   Networking: '🔌',
   Default: '📦',
 };

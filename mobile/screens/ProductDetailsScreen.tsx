@@ -1,111 +1,92 @@
 import React from 'react';
 import { StyleSheet, View, ScrollView } from 'react-native';
-import { Text, Surface, IconButton, Divider, useTheme } from 'react-native-paper';
-import { useProduct } from '../hooks/useApi';
+import { Text, Surface, IconButton, useTheme } from 'react-native-paper';
+import { useInventoryItem } from '../hooks/useApi';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
 import { PRODUCT_ICONS } from '../constants/config';
-import { PrimaryButton, SecondaryButton } from '../components/AppButtons';
 import { LoadingState, ErrorState } from '../components/FeedbackStates';
 
 export default function ProductDetailsScreen({ route, navigation }: any) {
-  const { productId } = route.params;
+  const inventoryId = route.params?.inventoryId as number;
   const theme = useTheme();
-  const { data: product, isLoading, error, refetch } = useProduct(productId);
+  const { data: item, isLoading, error } = useInventoryItem(inventoryId);
 
   if (isLoading) {
-    return <LoadingState message="Connecting to asset registry..." />;
+    return <LoadingState message="Loading inventory record..." />;
   }
 
-  if (error || !product) {
+  if (error || !item) {
     return (
-      <ErrorState 
-        title="Asset Not Found" 
-        description="This hardware record has been removed or unregistered from central catalog."
+      <ErrorState
+        title="Record not found"
+        description="This inventory row does not exist or was removed."
         onRetry={() => navigation.goBack()}
         icon="alert-octagon"
       />
     );
   }
 
-  const emoji = PRODUCT_ICONS[product.category] || PRODUCT_ICONS.Default;
+  const emoji = PRODUCT_ICONS[item.category ?? ''] || PRODUCT_ICONS.Default;
 
   return (
     <View style={styles.container}>
-      {/* Header bar */}
       <View style={styles.headerBar}>
         <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} />
-        <Text style={styles.headerTitle}>Hardware Detail</Text>
-        <IconButton icon="dots-vertical" size={24} />
+        <Text style={styles.headerTitle}>Inventory Detail</Text>
+        <View style={{ width: 48 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Visual overview */}
         <Surface style={styles.visualSection} elevation={1}>
           <Text style={styles.visualEmoji}>{emoji}</Text>
-          <Text style={styles.visualName}>{product.name}</Text>
-          <Text style={styles.visualRef}>SKU: {product.ref}</Text>
+          <Text style={styles.visualName}>{item.productName}</Text>
+          <Text style={styles.visualRef}>Article: {item.articleNumber}</Text>
         </Surface>
 
-        {/* Detailed stats grids */}
-        <Text style={styles.sectionHeader}>Registry Details</Text>
+        <Text style={styles.sectionHeader}>Product Details</Text>
         <View style={styles.gridSection}>
           <View style={styles.gridCell}>
             <Text style={styles.cellLabel}>Category</Text>
-            <Text style={styles.cellValue}>{product.category}</Text>
+            <Text style={styles.cellValue}>{item.category ?? '—'}</Text>
           </View>
           <View style={styles.gridCell}>
             <Text style={styles.cellLabel}>Brand</Text>
-            <Text style={styles.cellValue}>{product.brand}</Text>
+            <Text style={styles.cellValue}>{item.brand}</Text>
           </View>
           <View style={styles.gridCell}>
-            <Text style={styles.cellLabel}>Warehouse Location</Text>
-            <Text style={styles.cellValue}>{product.warehouse}</Text>
+            <Text style={styles.cellLabel}>Quantity</Text>
+            <Text style={styles.cellValue}>{item.quantityAvailable}</Text>
           </View>
           <View style={styles.gridCell}>
-            <Text style={styles.cellLabel}>Shelving Unit</Text>
-            <Text style={styles.cellValue}>{product.shelf}</Text>
+            <Text style={styles.cellLabel}>Status</Text>
+            <Text style={styles.cellValue}>{item.status}</Text>
           </View>
           <View style={styles.gridCell}>
-            <Text style={styles.cellLabel}>Unit Valuation</Text>
-            <Text style={styles.cellValue}>€{product.price}</Text>
+            <Text style={styles.cellLabel}>Serial Number</Text>
+            <Text style={styles.cellValue} numberOfLines={2}>{item.serialNumber ?? '—'}</Text>
           </View>
           <View style={styles.gridCell}>
-            <Text style={styles.cellLabel}>Suppliers Source</Text>
-            <Text style={styles.cellValue} numberOfLines={1}>{product.supplier}</Text>
+            <Text style={styles.cellLabel}>Purchase Order</Text>
+            <Text style={styles.cellValue}>{item.poNumber ?? item.purchaseOrderId ?? '—'}</Text>
+          </View>
+          <View style={styles.gridCell}>
+            <Text style={styles.cellLabel}>Received by</Text>
+            <Text style={styles.cellValue}>{item.receivedBy}</Text>
+          </View>
+          <View style={styles.gridCell}>
+            <Text style={styles.cellLabel}>Received at</Text>
+            <Text style={styles.cellValue}>
+              {item.receivedAt ? new Date(item.receivedAt).toLocaleString() : '—'}
+            </Text>
           </View>
         </View>
 
-        {/* Allocation totals */}
-        <Text style={styles.sectionHeader}>Stock Allocation</Text>
-        <Surface style={styles.allocationCard} elevation={1}>
-          <View style={styles.allocationRow}>
-            <View>
-              <Text style={styles.allocationLabel}>Available Count</Text>
-              <Text style={[styles.allocationValue, { color: theme.colors.primary }]}>
-                {product.quantity} Units
-              </Text>
-            </View>
-            <Divider style={styles.verticalDivider} />
-            <View>
-              <Text style={styles.allocationLabel}>Reserved Tickets</Text>
-              <Text style={[styles.allocationValue, { color: Colors.text }]}>
-                {product.reserved} Units
-              </Text>
-            </View>
-          </View>
+        <Surface style={styles.idCard} elevation={1}>
+          <Text style={styles.cellLabel}>Inventory ID</Text>
+          <Text style={styles.idValue}>#{item.id}</Text>
+          <Text style={styles.cellLabel}>Product type ID</Text>
+          <Text style={styles.idValue}>#{item.productId}</Text>
         </Surface>
-
-        {/* Action Panel */}
-        <View style={styles.actionPanel}>
-          <PrimaryButton 
-            title="Assign To Support Ticket" 
-            onPress={() => navigation.navigate('WorkflowAssign', { preselectedProduct: product })}
-          />
-          <SecondaryButton 
-            title="Receive Box Shipments" 
-            onPress={() => navigation.navigate('WorkflowReceive', { preselectedProduct: product })}
-          />
-        </View>
       </ScrollView>
     </View>
   );
@@ -120,11 +101,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: Spacing.xl + 20,
+    paddingHorizontal: Spacing.xs,
     backgroundColor: '#FFF',
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
-    paddingHorizontal: Spacing.sm,
   },
   headerTitle: {
     fontSize: 16,
@@ -133,97 +113,68 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: Spacing.lg,
+    paddingBottom: 40,
   },
   visualSection: {
     backgroundColor: '#FFF',
     borderRadius: BorderRadius.lg,
-    paddingVertical: Spacing.xl,
+    padding: Spacing.lg,
     alignItems: 'center',
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.lg,
   },
   visualEmoji: {
-    fontSize: 56,
-    marginBottom: Spacing.md,
+    fontSize: 48,
+    marginBottom: Spacing.sm,
   },
   visualName: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
     color: Colors.text,
     textAlign: 'center',
-    paddingHorizontal: Spacing.md,
   },
   visualRef: {
-    fontSize: 11,
-    fontFamily: 'monospace',
+    fontSize: 12,
     color: Colors.textSecondary,
     marginTop: 4,
   },
   sectionHeader: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: 'bold',
     textTransform: 'uppercase',
     color: Colors.textSecondary,
-    marginTop: Spacing.md,
     marginBottom: Spacing.sm,
     letterSpacing: 0.5,
   },
   gridSection: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginHorizontal: -4,
+    marginBottom: Spacing.lg,
   },
   gridCell: {
     width: '50%',
-    padding: 4,
+    paddingVertical: Spacing.sm,
+    paddingRight: Spacing.sm,
   },
   cellLabel: {
-    fontSize: 9,
-    fontWeight: 'bold',
+    fontSize: 10,
+    color: Colors.textSecondary,
     textTransform: 'uppercase',
-    color: Colors.textMuted,
+    marginBottom: 2,
   },
   cellValue: {
-    fontSize: 12,
-    fontWeight: 'bold',
+    fontSize: 13,
+    fontWeight: '600',
     color: Colors.text,
-    marginTop: 2,
-    backgroundColor: '#FFF',
-    padding: 10,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
-  allocationCard: {
+  idCard: {
     backgroundColor: '#FFF',
     borderRadius: BorderRadius.lg,
     padding: Spacing.md,
-    marginTop: Spacing.xs,
   },
-  allocationRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-  },
-  verticalDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: Colors.border,
-  },
-  allocationLabel: {
-    fontSize: 9,
+  idValue: {
+    fontSize: 14,
     fontWeight: 'bold',
-    color: Colors.textSecondary,
-    textTransform: 'uppercase',
-    textAlign: 'center',
-  },
-  allocationValue: {
-    fontSize: 18,
-    fontWeight: '900',
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  actionPanel: {
-    marginTop: Spacing.xl,
-    marginBottom: Spacing.xxl,
+    color: Colors.primary,
+    marginBottom: Spacing.sm,
   },
 });

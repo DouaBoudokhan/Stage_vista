@@ -1,56 +1,59 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList, TouchableOpacity, ScrollView } from 'react-native';
-import { TextInput, IconButton, useTheme, Surface, Text } from 'react-native-paper';
-import { useProducts } from '../hooks/useApi';
+import { TextInput, IconButton, useTheme, Text } from 'react-native-paper';
+import { useInventory } from '../hooks/useApi';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
-import { ProductCard } from '../components/Cards';
+import { InventoryItemCard } from '../components/Cards';
 import { LoadingState, EmptyState } from '../components/FeedbackStates';
 
 export default function InventoryScreen({ navigation }: any) {
-  const { data: products, isLoading, error, refetch } = useProducts();
   const theme = useTheme();
-  
   const [searchQuery, setSearchQuery] = useState('');
   const [isGridView, setIsGridView] = useState(true);
   const [selectedBrand, setSelectedBrand] = useState('All');
+  const [selectedCategory, setSelectedCategory] = useState('All');
 
-  const brands = ['All', 'Dell', 'HP', 'Apple', 'EPOS', 'Logitech'];
+  const { data: items, isLoading, error, refetch, isFetching } = useInventory({
+    search: searchQuery.trim() || undefined,
+  });
+
+  const brands = useMemo(() => {
+    const set = new Set(items?.map((i) => i.brand).filter(Boolean) ?? []);
+    return ['All', ...Array.from(set).sort()];
+  }, [items]);
+
+  const categories = useMemo(() => {
+    const set = new Set(items?.map((i) => i.category).filter(Boolean) ?? []);
+    return ['All', ...Array.from(set).sort()];
+  }, [items]);
 
   if (isLoading) {
-    return <LoadingState message="Loading inventory database..." />;
+    return <LoadingState message="Loading inventory from database..." />;
   }
 
   if (error) {
     return (
-      <EmptyState 
-        title="Telemetry Failed" 
-        description="Could not download products catalog from FastAPI database."
+      <EmptyState
+        title="Could not load inventory"
+        description="Failed to fetch inventory rows from the FastAPI backend."
         icon="alert-octagon"
       />
     );
   }
 
-  // Filter products based on search query & selected brand
-  const filteredProducts = products?.filter((p) => {
-    const matchesSearch = 
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      p.ref.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.category.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesBrand = 
-      selectedBrand === 'All' || 
-      p.brand.toLowerCase() === selectedBrand.toLowerCase();
-
-    return matchesSearch && matchesBrand;
-  }) ?? [];
+  const filteredItems =
+    items?.filter((item) => {
+      const matchesBrand = selectedBrand === 'All' || item.brand === selectedBrand;
+      const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
+      return matchesBrand && matchesCategory;
+    }) ?? [];
 
   return (
     <View style={styles.container}>
-      {/* Search & Layout Actions */}
       <View style={styles.headerSection}>
         <TextInput
           mode="outlined"
-          placeholder="Find SKU, reference, category..."
+          placeholder="Search name, article, serial, brand..."
           value={searchQuery}
           onChangeText={setSearchQuery}
           style={styles.searchBar}
@@ -74,51 +77,73 @@ export default function InventoryScreen({ navigation }: any) {
         />
       </View>
 
-      {/* Brand Filters Scroll */}
       <View style={styles.filterSection}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {brands.map((brand) => {
-            const isActive = selectedBrand === brand;
+          {categories.map((cat) => {
+            const isActive = selectedCategory === cat;
             return (
               <TouchableOpacity
-                key={brand}
-                onPress={() => setSelectedBrand(brand)}
+                key={cat}
+                onPress={() => setSelectedCategory(cat)}
                 style={[
                   styles.filterChip,
-                  isActive && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }
+                  isActive && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
                 ]}
               >
-                <Text style={[styles.filterChipText, isActive && { color: '#FFF' }]}>
-                  {brand}
-                </Text>
+                <Text style={[styles.filterChipText, isActive && { color: '#FFF' }]}>{cat}</Text>
               </TouchableOpacity>
             );
           })}
         </ScrollView>
       </View>
 
-      {/* Products list */}
+      {brands.length > 1 && (
+        <View style={styles.filterSection}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+            {brands.map((brand) => {
+              const isActive = selectedBrand === brand;
+              return (
+                <TouchableOpacity
+                  key={brand}
+                  onPress={() => setSelectedBrand(brand)}
+                  style={[
+                    styles.filterChip,
+                    isActive && { backgroundColor: Colors.textSecondary, borderColor: Colors.textSecondary },
+                  ]}
+                >
+                  <Text style={[styles.filterChipText, isActive && { color: '#FFF' }]}>{brand}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      <Text style={styles.countLabel}>
+        {filteredItems.length} inventory record{filteredItems.length === 1 ? '' : 's'}
+      </Text>
+
       <FlatList
-        data={filteredProducts}
+        data={filteredItems}
         key={isGridView ? 'grid' : 'list'}
         numColumns={isGridView ? 2 : 1}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => (
-          <ProductCard
-            product={item}
+          <InventoryItemCard
+            item={item}
             isGrid={isGridView}
-            onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+            onPress={() => navigation.navigate('ProductDetails', { inventoryId: item.id })}
           />
         )}
         contentContainerStyle={styles.listContainer}
         ListEmptyComponent={
-          <EmptyState 
-            title="Product Not Found" 
-            description="The searched SKU or query matches no registered hardware configurations."
-            icon="clipboard-alert"
+          <EmptyState
+            title="No inventory found"
+            description="Receive stock via Workflow 1 to add items to inventory."
+            icon="package-variant"
           />
         }
-        refreshing={false}
+        refreshing={isFetching}
         onRefresh={refetch}
       />
     </View>
@@ -150,11 +175,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     borderWidth: 1,
     borderRadius: BorderRadius.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
   },
   filterSection: {
     paddingVertical: Spacing.xs,
@@ -164,7 +184,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.xs,
   },
   filterChip: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: BorderRadius.sm,
     backgroundColor: '#FFF',
@@ -177,6 +197,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: Colors.textSecondary,
     textTransform: 'uppercase',
+  },
+  countLabel: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.xs,
+    fontWeight: '600',
   },
   listContainer: {
     padding: Spacing.md,
