@@ -1,5 +1,6 @@
 """Document Model - Enhanced for Invoice Analysis"""
 from sqlalchemy import Column, String, DateTime, Integer, Text, UniqueConstraint
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from ..database import Base
 
@@ -17,6 +18,8 @@ class Document(Base):
     extracted_text = Column(Text)  # Full OCR text for auditing
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    purchase_orders = relationship("PurchaseOrder", back_populates="document")
 
     __table_args__ = (
         UniqueConstraint("document_type", "document_number", name="uq_documents_type_number"),

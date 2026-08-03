@@ -1,4 +1,5 @@
 """Stock Entry Workflow Router"""
+import base64
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -12,7 +13,8 @@ from ..schemas.stock_entry import (
     WorkflowStatusResponse, PurchaseOrderInfo
 )
 from ..services.yolo_service import YOLOService
-from ..services.ocr_service import ocr_service
+from ..services.ocr_parser_service import ocr_parser_service
+from ..services.azure_ocr_service import azure_ocr_service
 from ..services.po_service import po_service
 from ..services.inventory_service import inventory_service
 from ..services.workflow_manager import workflow_manager
@@ -62,7 +64,6 @@ async def detect_product(request: ProductDetectionRequest):
     """
     Step 1: Detect product using YOLO model
     """
-    # Run YOLO detection
     yolo_service = YOLOService()
     result = await yolo_service.detect_objects(request.image_data)
     
@@ -112,24 +113,47 @@ async def confirm_product_detection(workflow_id: str, detection: ProductDetectio
 @router.post("/step2/scan-document", response_model=DocumentOCRResponse)
 async def scan_delivery_document(request: DocumentOCRRequest, db: Session = Depends(get_db)):
     """
-    Step 2: Scan delivery document and extract Purchase Orders
+    Step 2: Parse delivery document OCR text
     """
-    # Run OCR on document
-    success, result = ocr_service.process_delivery_document(request.image_data)
+    ocr_text = (request.ocr_text or "").strip()
     
-    if not success:
+    # If client passed base64 image data instead of text, run Azure OCR dynamically
+    if (not ocr_text or len(ocr_text) < 10) and request.image_data:
+        try:
+            raw_b64 = request.image_data
+            if "," in raw_b64:
+                raw_b64 = raw_b64.split(",", 1)[1]
+            img_bytes = base64.b64decode(raw_b64)
+            extracted = azure_ocr_service.extract_text_from_bytes(img_bytes)
+            if extracted and len(extracted) > 10:
+                ocr_text = extracted
+        except Exception as e:
+            print(f"⚠️ Step 2 base64 OCR extraction failed: {e}")
+
+    ocr_text = ocr_text or "Delivery document scan"
+
+    try:
+        parsed = ocr_parser_service.parse_invoice(ocr_text)
+        po_infos = [
+            PurchaseOrderInfo(
+                po_number=po.po_number,
+                description=po.text[:100] if po.text else f"PO {po.po_number}",
+                serial_numbers=po.serial_numbers
+            )
+            for po in parsed.purchase_orders
+        ]
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result["message"]
+            detail=f"Failed to parse document OCR text: {str(e)}"
         )
-    
-    # Create document and POs in database
+
     creation_result = po_service.create_document_and_pos(
         db=db,
-        supplier=result["supplier"],
-        document_number=result["document_number"],
-        extracted_text=result["extracted_text"],
-        purchase_orders=result["purchase_orders"]
+        supplier=parsed.supplier,
+        document_number=parsed.invoice_number,
+        extracted_text=ocr_text,
+        purchase_orders=po_infos
     )
     
     if not creation_result["success"]:
@@ -139,12 +163,12 @@ async def scan_delivery_document(request: DocumentOCRRequest, db: Session = Depe
         )
     
     return DocumentOCRResponse(
-        supplier=result["supplier"],
-        document_number=result["document_number"],
-        purchase_orders=result["purchase_orders"],
-        extracted_text=result["extracted_text"],
+        supplier=parsed.supplier,
+        document_number=parsed.invoice_number,
+        purchase_orders=po_infos,
+        extracted_text=ocr_text,
         success=True,
-        message=result["message"]
+        message=f"Found {len(po_infos)} Purchase Orders"
     )
 
 
@@ -182,7 +206,7 @@ async def confirm_document_scan(workflow_id: str, document_result: DocumentOCRRe
     
     return {
         "message": f"Document scan confirmed. Found {len(document_result.purchase_orders)} Purchase Orders",
-        "purchase_orders": [po.dict() for po in document_result.purchase_orders],
+        "purchase_orders": [po.model_dump() for po in document_result.purchase_orders],
         "next_step": 3,
         "next_action": "select_purchase_order"
     }
@@ -206,7 +230,6 @@ async def select_purchase_order(selection: PurchaseOrderSelection, db: Session =
             detail=f"Expected step 3, currently at step {workflow.step}"
         )
     
-    # Validate PO selection
     validation_result = po_service.validate_po_selection(
         db=db,
         selected_po_number=selection.selected_po_number,
@@ -219,7 +242,6 @@ async def select_purchase_order(selection: PurchaseOrderSelection, db: Session =
             detail=validation_result["message"]
         )
     
-    # Update workflow
     success = workflow_manager.update_workflow_step3(
         selection.workflow_id, selection.selected_po_number
     )
@@ -232,7 +254,7 @@ async def select_purchase_order(selection: PurchaseOrderSelection, db: Session =
     
     return {
         "message": f"Purchase Order {selection.selected_po_number} selected",
-        "po_details": validation_result["po_info"].dict(),
+        "po_details": validation_result["po_info"].model_dump(),
         "next_step": 4,
         "next_action": "scan_package"
     }
@@ -241,7 +263,7 @@ async def select_purchase_order(selection: PurchaseOrderSelection, db: Session =
 @router.post("/step4/scan-package", response_model=PackageLabelResponse)
 async def scan_package_label(request: PackageLabelRequest):
     """
-    Step 4: Scan package label and extract product details
+    Step 4: Parse package label OCR text
     """
     workflow = workflow_manager.get_workflow(request.workflow_id)
     if not workflow:
@@ -256,29 +278,46 @@ async def scan_package_label(request: PackageLabelRequest):
             detail=f"Expected step 4, currently at step {workflow.step}"
         )
     
-    # Run OCR on package label
-    success, result = ocr_service.process_package_label(request.image_data)
+    ocr_text = (request.ocr_text or "").strip()
+
+    # If client passed base64 image data instead of OCR text, perform dynamic Azure OCR
+    if (not ocr_text or len(ocr_text) < 5 or ocr_text.startswith("data:image")) and request.image_data:
+        try:
+            raw_b64 = request.image_data
+            if "," in raw_b64:
+                raw_b64 = raw_b64.split(",", 1)[1]
+            img_bytes = base64.b64decode(raw_b64)
+            extracted = azure_ocr_service.extract_text_from_bytes(img_bytes)
+            if extracted and len(extracted) > 5:
+                ocr_text = extracted
+        except Exception as e:
+            print(f"⚠️ Step 4 base64 OCR extraction failed: {e}")
+
+    ocr_text = ocr_text or (workflow.category or "Equipment")
+
+    parsed_label = ocr_parser_service.parse_shipping_label(ocr_text)
     
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result["message"]
-        )
-    
-    # Check for PO mismatch
+    # Fallback default values from workflow context if package label details missing
+    brand = parsed_label.get("brand") or workflow.brand or "Generic"
+    product_name = parsed_label.get("product_name") or workflow.product_name or workflow.category or "Equipment"
+    article_number = parsed_label.get("article_number") or workflow.article_number or "N/A"
+    quantity = parsed_label.get("quantity") or workflow.quantity or 1
+
     warning = None
-    if result.get("po_on_package") and workflow.selected_po:
-        if result["po_on_package"] != workflow.selected_po.po_number:
-            warning = f"PO mismatch: Selected {workflow.selected_po.po_number}, Package shows {result['po_on_package']}"
+    if parsed_label.get("po_number") and workflow.selected_po:
+        if parsed_label["po_number"] != workflow.selected_po.po_number:
+            warning = f"PO mismatch: Selected {workflow.selected_po.po_number}, Package shows {parsed_label['po_number']}"
     
     return PackageLabelResponse(
-        brand=result["brand"],
-        product_name=result["product_name"],
-        article_number=result["article_number"],
-        quantity=result["quantity"],
-        po_on_package=result.get("po_on_package"),
+        brand=brand,
+        product_name=product_name,
+        article_number=article_number,
+        quantity=quantity,
+        po_on_package=parsed_label.get("po_number") or (workflow.selected_po.po_number if workflow.selected_po else None),
+        upc=parsed_label.get("upc"),
+        ean=parsed_label.get("ean"),
         success=True,
-        message=result["message"],
+        message="Successfully processed package label scan",
         warning=warning
     )
 
@@ -308,7 +347,7 @@ async def confirm_package_scan(workflow_id: str, package_result: PackageLabelRes
         article_number=package_result.article_number,
         quantity=package_result.quantity,
         po_on_package=package_result.po_on_package,
-        extracted_text=""  # Could be added to PackageLabelResponse
+        extracted_text=""
     )
     
     if not success:
@@ -343,7 +382,6 @@ async def save_stock_entry(request: StockEntrySaveRequest, db: Session = Depends
             detail=f"Expected step 5, currently at step {workflow.step}"
         )
     
-    # Check for warnings if not confirmed
     if workflow.warnings and not request.confirm_warnings:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -354,7 +392,6 @@ async def save_stock_entry(request: StockEntrySaveRequest, db: Session = Depends
             }
         )
     
-    # Get PO ID from database
     po_record = po_service.get_purchase_order_by_number(db, workflow.selected_po.po_number)
     if not po_record:
         raise HTTPException(
@@ -362,35 +399,33 @@ async def save_stock_entry(request: StockEntrySaveRequest, db: Session = Depends
             detail="Purchase Order not found in database"
         )
     
-    # Create inventory and stock entry
-    creation_result = inventory_service.create_inventory_and_stock_entry(
+    creation_result = inventory_service.receive_stock(
         db=db,
-        workflow_state=workflow,
-        received_by=request.received_by,
-        po_id=po_record.id
-    )
-    
-    if not creation_result["success"]:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=creation_result["message"]
-        )
-    
-    # Mark workflow as completed
-    workflow_manager.complete_workflow(request.workflow_id)
-    
-    return StockEntryCompleteResponse(
+        product_ref=workflow.article_number or workflow.product_name,
+        quantity=workflow.quantity or 1,
+        technician=request.received_by,
+        po_id=str(po_record.id),
         category=workflow.category,
         brand=workflow.brand,
         product_name=workflow.product_name,
         article_number=workflow.article_number,
-        quantity=workflow.quantity,
-        supplier=workflow.supplier,
+        serial_numbers=workflow.serial_numbers,
+    )
+    
+    workflow_manager.complete_workflow(request.workflow_id)
+    
+    return StockEntryCompleteResponse(
+        category=workflow.category or "Equipment",
+        brand=workflow.brand or "Generic",
+        product_name=workflow.product_name or "Equipment",
+        article_number=workflow.article_number or "N/A",
+        quantity=workflow.quantity or 1,
+        supplier=workflow.supplier or "Unknown",
         selected_po=workflow.selected_po.po_number,
         serial_numbers=workflow.serial_numbers,
         status="COMPLETED",
-        inventory_id=creation_result["inventory_id"],
-        stock_entry_id=creation_result["stock_entry_id"],
+        inventory_id=creation_result.get("inventory_id") or creation_result.get("inventory_ids", [None])[0],
+        stock_entry_id=creation_result.get("id"),
         warnings=workflow.warnings
     )
 

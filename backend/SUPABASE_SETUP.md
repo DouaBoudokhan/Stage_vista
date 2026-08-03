@@ -1,225 +1,98 @@
-# 🗄️ Connect to Supabase - Quick Guide
+# Supabase Setup Guide for StockIT
 
-## ✅ Step-by-Step Instructions
+## Required Tables (8 Tables)
 
-### 1. Create Supabase Account (2 minutes)
+```sql
+-- 1. Users Table
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR UNIQUE NOT NULL,
+    email VARCHAR UNIQUE NOT NULL,
+    password_hash VARCHAR NOT NULL,
+    role VARCHAR NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
-1. Go to: **https://supabase.com/**
-2. Click **"Start your project"**
-3. Sign up (FREE - no credit card needed!)
+-- 2. Products Table (Master Catalog)
+CREATE TABLE IF NOT EXISTS products (
+    id SERIAL PRIMARY KEY,
+    category VARCHAR UNIQUE NOT NULL,
+    tracking_type VARCHAR NOT NULL DEFAULT 'BULK', -- 'SERIALIZED' or 'BULK'
+    stock_on_hand INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT ck_products_tracking_type CHECK (tracking_type IN ('SERIALIZED', 'BULK'))
+);
 
----
+-- 3. Documents Table
+CREATE TABLE IF NOT EXISTS documents (
+    id SERIAL PRIMARY KEY,
+    document_type VARCHAR(100) NOT NULL,
+    document_number VARCHAR(255) NOT NULL,
+    supplier VARCHAR(255) NOT NULL,
+    image_path VARCHAR(500) NOT NULL,
+    extracted_text TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_documents_type_number UNIQUE (document_type, document_number)
+);
 
-### 2. Create New Project (2 minutes)
+-- 4. Purchase Orders Table
+CREATE TABLE IF NOT EXISTS purchase_orders (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+    po_number VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    serial_numbers TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
-1. Click **"New Project"** button
-2. Fill in details:
-   - **Organization:** Create new or use existing
-   - **Project Name:** `stockit-db` (or any name you want)
-   - **Database Password:** Choose a strong password
-   
-   ⚠️ **IMPORTANT:** Save this password! You'll need it.
-   
-   - **Region:** Choose closest to you (e.g., `US East`)
-   - **Pricing Plan:** `Free` (perfect for development)
+-- 5. Inventory Table
+CREATE TABLE IF NOT EXISTS inventory (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER REFERENCES products(id) NOT NULL,
+    purchase_order_id INTEGER REFERENCES purchase_orders(id) NOT NULL,
+    article_number VARCHAR NOT NULL,
+    serial_number VARCHAR,
+    quantity_available INTEGER NOT NULL DEFAULT 0,
+    status VARCHAR NOT NULL DEFAULT 'AVAILABLE', -- 'AVAILABLE', 'ASSIGNED', 'MAINTENANCE', 'RETIRED', 'LOST'
+    received_by VARCHAR NOT NULL,
+    received_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_inventory_status CHECK (status IN ('AVAILABLE', 'ASSIGNED', 'MAINTENANCE', 'RETIRED', 'LOST'))
+);
 
-3. Click **"Create new project"**
+-- 6. Stock Entries Table
+CREATE TABLE IF NOT EXISTS stock_entries (
+    id SERIAL PRIMARY KEY,
+    inventory_id INTEGER REFERENCES inventory(id) ON DELETE CASCADE NOT NULL,
+    purchase_order_id INTEGER REFERENCES purchase_orders(id) ON DELETE CASCADE NOT NULL,
+    quantity_received INTEGER NOT NULL,
+    created_by VARCHAR NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
-⏳ Wait 1-2 minutes while Supabase creates your database...
+-- 7. Stock Exits Table
+CREATE TABLE IF NOT EXISTS stock_exits (
+    id SERIAL PRIMARY KEY,
+    inventory_id INTEGER REFERENCES inventory(id) ON DELETE CASCADE NOT NULL,
+    ticket_number VARCHAR NOT NULL,
+    quantity INTEGER NOT NULL,
+    created_by VARCHAR NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
----
-
-### 3. Get Your Connection String (1 minute)
-
-Once your project is ready:
-
-1. Click **⚙️ Settings** (bottom left sidebar)
-2. Click **"Database"** 
-3. Scroll down to **"Connection string"** section
-4. Select **"URI"** tab (NOT "Transaction pooler" or "Session")
-5. You'll see:
-
+-- 8. Tickets Table
+CREATE TABLE IF NOT EXISTS tickets (
+    id VARCHAR PRIMARY KEY,
+    title VARCHAR NOT NULL,
+    description TEXT,
+    priority VARCHAR NOT NULL DEFAULT 'Medium',
+    category VARCHAR,
+    product_needed VARCHAR,
+    status VARCHAR NOT NULL DEFAULT 'Open',
+    requester VARCHAR,
+    assignee VARCHAR,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE,
+    closed_at TIMESTAMP WITH TIME ZONE
+);
 ```
-postgresql://postgres.xxxxxx:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres
-```
-
-6. **Click "Copy"** button
-7. Replace `[YOUR-PASSWORD]` with your actual database password
-
-**Example:**
-```
-Before: postgresql://postgres.abc123:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres
-After:  postgresql://postgres.abc123:MySecretPass123@aws-0-us-east-1.pooler.supabase.com:5432/postgres
-```
-
----
-
-### 4. Update .env File (30 seconds)
-
-1. Open: `backend/.env`
-2. Find this line:
-```env
-DATABASE_URL=postgresql://postgres.xxxxxx:YOUR-PASSWORD-HERE@...
-```
-
-3. Replace it with your Supabase connection string
-
-**Example:**
-```env
-DATABASE_URL=postgresql://postgres.abc123:MySecretPass123@aws-0-us-east-1.pooler.supabase.com:5432/postgres
-```
-
-4. Save the file
-
-✅ **Done!** Your backend is now connected to Supabase!
-
----
-
-### 5. Test Connection (1 minute)
-
-Start your backend server:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-You should see:
-```
-🚀 Starting StockIT API v1.0.0
-📊 Initializing database...
-✅ Database initialized
-INFO:     Uvicorn running on http://0.0.0.0:8000
-```
-
-If you see this - **SUCCESS!** 🎉
-
-Open: http://localhost:8000/health
-
-You should see:
-```json
-{
-  "status": "healthy",
-  "version": "1.0.0",
-  "database": "connected",
-  "ai_services": "ready"
-}
-```
-
----
-
-## 🔍 Visual Guide
-
-### Finding Connection String in Supabase:
-
-```
-Supabase Dashboard
-├── Your Project
-│   └── ⚙️ Settings (left sidebar)
-│       └── Database
-│           └── Connection string
-│               └── URI ← Click here!
-│                   └── Copy the string
-```
-
----
-
-## ✅ Checklist
-
-- [ ] Created Supabase account
-- [ ] Created new project
-- [ ] Saved database password
-- [ ] Copied connection string (URI format)
-- [ ] Replaced `[YOUR-PASSWORD]` with actual password
-- [ ] Updated `backend/.env` file
-- [ ] Started backend server
-- [ ] Tested `/health` endpoint
-
----
-
-## 🆘 Troubleshooting
-
-### "Connection refused" or "Connection timeout"
-
-**Check:**
-1. ✅ Is your Supabase project active? (green dot in dashboard)
-2. ✅ Did you replace `[YOUR-PASSWORD]` with the actual password?
-3. ✅ Is the connection string in the correct format?
-4. ✅ Are you connected to the internet?
-
-### "Authentication failed"
-
-**Fix:**
-- Your password is wrong
-- Get a new connection string from Supabase
-- Make sure there are NO spaces in the password
-
-### "Could not translate host name"
-
-**Fix:**
-- Your connection string is incorrect
-- Copy it again from Supabase (URI format, not Transaction)
-
----
-
-## 📸 Screenshot Guide
-
-### Step 1: Find Settings
-![Settings Location](https://supabase.com/docs/img/database-settings.png)
-Look for ⚙️ icon in bottom left
-
-### Step 2: Database Section
-Click "Database" in settings menu
-
-### Step 3: Connection String
-Scroll to "Connection string" → Click "URI" tab → Click Copy
-
----
-
-## 💡 Pro Tips
-
-### Free Tier Limits (Supabase)
-- ✅ 500 MB database storage
-- ✅ Unlimited API requests
-- ✅ Perfect for development
-- ✅ No credit card required
-
-### Security
-- 🔒 Never commit `.env` to Git (already in `.gitignore`)
-- 🔒 Keep your database password secret
-- 🔒 Change password if accidentally exposed
-
-### Using Multiple Environments
-
-**Development (.env):**
-```env
-DATABASE_URL=postgresql://...supabase.com.../postgres
-```
-
-**Production (.env.production):**
-```env
-DATABASE_URL=postgresql://...production-db.../postgres
-```
-
----
-
-## 🎯 Next Steps
-
-Once connected:
-
-1. ✅ Start backend: `uvicorn app.main:app --reload`
-2. ✅ Open Swagger docs: http://localhost:8000/docs
-3. ✅ Create first user (register endpoint)
-4. ✅ Login and get token
-5. ✅ Test API endpoints
-6. ✅ Connect mobile app
-
----
-
-## 📞 Need Help?
-
-**Supabase Docs:** https://supabase.com/docs/guides/database
-**FastAPI Docs:** https://fastapi.tiangolo.com/
-
----
-
-**You're almost there! Just copy-paste your connection string and you're done! 🚀**

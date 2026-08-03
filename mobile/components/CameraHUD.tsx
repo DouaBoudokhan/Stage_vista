@@ -49,44 +49,21 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     try {
       setIsScanning(true);
       
-      // Use the camera service to take a photo
-      const base64Image = await CameraService.takePhoto();
+      const photo = await CameraService.takePhoto();
       
-      if (base64Image) {
-        if (mode === 'invoice') {
-          // For invoice mode, use the real backend API
-          try {
-            const analysisResult = await CameraService.analyzeInvoice(base64Image);
-            
-            // Convert backend response to expected format
-            const formattedResult = {
-              mode: 'invoice',
-              supplier: analysisResult.document?.supplier || 'Unknown Supplier',
-              invoiceNumber: analysisResult.document?.invoice_number || 'Unknown Invoice',
-              purchaseOrderSuggested: analysisResult.purchase_orders?.[0]?.po_number,
-              confidence: 95,
-              detectedItems: analysisResult.purchase_orders?.map((po: any) => ({
-                name: po.description || po.po_number,
-                ref: po.po_number,
-                quantity: po.serial_numbers?.length || 1,
-                matched: po.cached
-              })) || [],
-              quantity: 1
-            };
-            
-            onScanResult(formattedResult);
-          } catch (error) {
-            Alert.alert('Analysis Failed', 'Could not analyze invoice. Using mock data for demo.');
-            // Fallback to mock data
-            const mockData = CameraService.getSimulatedPreset('invoice_vista');
-            onScanResult(mockData);
+      if (photo) {
+        try {
+          let result;
+          if (mode === 'invoice') {
+            result = await CameraService.analyzeInvoice(photo.base64, photo.uri);
+          } else if (mode === 'product') {
+            result = await CameraService.analyzeProduct(photo.base64);
+          } else {
+            result = await CameraService.analyzeLabel(photo.base64, photo.uri);
           }
-        } else {
-          // For product and label modes, use mock data for now
-          const mockData = CameraService.getSimulatedPreset(
-            mode === 'product' ? 'dell_laptop' : 'label_shipping_dell'
-          );
-          onScanResult(mockData);
+          onScanResult(result);
+        } catch (error) {
+          Alert.alert('Analysis Failed', `Could not analyze ${mode}. Please try again or check your connection.`);
         }
       }
       

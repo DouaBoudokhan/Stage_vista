@@ -184,25 +184,62 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
     
     try {
       const articleNumber = labelScan.articleNumber ?? labelScan.reference ?? productScan.reference ?? 'UNKNOWN';
+      const category = productScan.category ?? 'Laptop';
+      const isBulk = ['headset', 'mouse', 'keyboard'].includes(category.toLowerCase());
+
       const labelSerialNumbers = labelScan.serialNumbers ?? [];
-      // Critical fix: use serials from the SELECTED PO (not global invoice.serialNumbers which has ALL POs' serials)
       const selectedPoSerialNumbers = selectedPO.serialNumbers ?? selectedPO.items?.[0]?.serialNumbers ?? [];
-      const allSerialNumbers = labelSerialNumbers.length > 0 ? labelSerialNumbers : selectedPoSerialNumbers;
+
+      let finalSerialNumbers: string[] = [];
+
+      if (isBulk) {
+        // For BULK products (Headset, Mouse, Keyboard), store the UPC extracted from the scanned package label
+        if (labelScan.upc) {
+          finalSerialNumbers = [labelScan.upc];
+        } else if (labelSerialNumbers.length > 0) {
+          finalSerialNumbers = labelSerialNumbers;
+        }
+      } else {
+        // For SERIALIZED products (Laptop, Monitor), use serial numbers from invoice/PO or label
+        finalSerialNumbers = labelSerialNumbers.length > 0 ? labelSerialNumbers : selectedPoSerialNumbers;
+      }
+
+      const getValidProductName = (candidates: (string | undefined | null)[]): string => {
+        for (const name of candidates) {
+          if (!name) continue;
+          const str = String(name).trim();
+          if (!str || str.toLowerCase() === 'n/a' || str.toLowerCase() === 'unknown') continue;
+          if (/\.(jpg|jpeg|png|webp|gif|pdf|tiff|bmp)$/i.test(str) || str.includes('/') || str.includes('\\')) continue;
+          if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(str)) continue;
+          return str;
+        }
+        return category || 'Equipment';
+      };
+
+      const finalProductName = getValidProductName([
+        labelScan.productName,
+        productScan.detectedObject,
+        productScan.category,
+        category,
+        articleNumber
+      ]);
+
       await receiveStockMutation.mutateAsync({
         ref: articleNumber,
         quantity: labelScan.quantity ?? productScan.quantity ?? 1,
         poId: selectedPO.id,
         technician: 'admin',
-        category: productScan.category ?? 'Laptop',
+        category,
         brand: labelScan.brand ?? 'Unknown',
-        productName: labelScan.productName ?? productScan.detectedObject ?? productScan.category ?? articleNumber,
+        productName: finalProductName,
         articleNumber,
-        serialNumbers: allSerialNumbers,
+        serialNumbers: finalSerialNumbers,
       });
       // Skip to final success
       setStep(5);
-    } catch (e) {
-      Alert.alert('FastAPI Update Failed', 'Failed to register received items on FastAPI backend.');
+    } catch (e: any) {
+      const serverDetail = e?.response?.data?.detail || e?.message || 'Failed to register received items on FastAPI backend.';
+      Alert.alert('FastAPI Update Failed', typeof serverDetail === 'string' ? serverDetail : JSON.stringify(serverDetail));
     }
   };
 

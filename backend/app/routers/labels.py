@@ -1,87 +1,66 @@
 """
 Label Analysis Router
-OCR-based analysis of shipping labels and package information
+Accepts a shipping label image and runs Azure Computer Vision OCR server-side,
+then parses the extracted text for product details.
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
-from app.services.ocr_parser_service import OCRParserService
 import logging
+from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import JSONResponse
+
+from app.services.ocr_parser_service import ocr_parser_service
+from app.services.azure_ocr_service import azure_ocr_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/labels", tags=["labels"])
 
-ocr_parser_service = OCRParserService()
 
 @router.post("/analyze")
 async def analyze_label(file: UploadFile = File(...)):
     """
-    Analyze shipping label using OCR to extract:
-    - Equipment Product Name (IMPACT 100 MS Stereo USB-C+A)
-    - Brand (EPOS, Dell, Apple, etc.)
-    - Article Number (Art.-No. 1001421)
-    - Quantities (QTY: 20)
-    - PO Number (PO:3480)
-    - Serial numbers & Barcodes
+    Analyze shipping label image.
+    
+    1. Receives the raw image file from the mobile client
+    2. Sends it to Azure Computer Vision Read API for dynamic OCR
+    3. Parses the extracted text for brand, product, article number, PO, serials, quantity, upc
     """
     try:
+        if not file or not file.filename:
+            raise HTTPException(status_code=400, detail="Image file is required.")
+
         image_bytes = await file.read()
-        
-        # Extract text via OCR
-        from app.services.azure_ocr_service import azure_ocr_service
-        from app.services.ocr_service import ocr_service
-        import base64
+        if not image_bytes or len(image_bytes) < 100:
+            raise HTTPException(status_code=400, detail="Image file is empty or too small.")
 
-        final_text = ""
-        try:
-            val = azure_ocr_service.validate_image(image_bytes)
-            if val.get('valid'):
-                res = await azure_ocr_service.extract_text_from_image(image_bytes)
-                if res.get('success') and res.get('text'):
-                    final_text = res['text']
-        except Exception:
-            pass
+        print(f"\n==================== PACKAGE LABEL SCAN: {file.filename} ({len(image_bytes)} bytes) ====================")
 
-        if not final_text.strip():
-            img_b64 = base64.b64encode(image_bytes).decode('utf-8')
-            success, text = ocr_service.extract_text_from_image(img_b64)
-            if success and text:
-                final_text = text
+        # Run Azure Computer Vision OCR on the image
+        extracted_text = azure_ocr_service.extract_text_from_bytes(image_bytes)
 
-        # Parse extracted OCR text or sample label
-        parsed_result = ocr_parser_service.parse_shipping_label(final_text)
-        
+        print("\n--- [AZURE OCR EXTRACTED TEXT FROM PACKAGE LABEL] ---")
+        print(extracted_text or "[NO TEXT EXTRACTED BY AZURE OCR]")
+        print("----------------------------------------------------\n")
+
+        if not extracted_text or len(extracted_text.strip()) < 5:
+            raise HTTPException(
+                status_code=422,
+                detail="Azure OCR could not extract text from the label image. Please retake with better lighting."
+            )
+
+        # Parse extracted text for shipping label fields
+        parsed_result = ocr_parser_service.parse_shipping_label(extracted_text)
+
+        print("--- [PARSED LABEL RESULT] ---")
+        print(parsed_result)
+        print("====================================================================================\n")
+
+        parsed_result["confidence"] = 85
+        parsed_result["extracted_text"] = extracted_text[:500]
+
         return JSONResponse(content=parsed_result)
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Label analysis failed: {e}")
-        raise HTTPException(status_code=500, detail="Label analysis failed")
-
-@router.post("/ocr-only")
-async def extract_text_only(file: UploadFile = File(...)):
-    """
-    Extract raw text from label image using OCR
-    """
-    try:
-        if not file.content_type or not file.content_type.startswith('image/'):
-            raise HTTPException(status_code=400, detail="File must be an image")
-            
-        # Mock OCR text extraction
-        mock_text = """
-        Dell Latitude 5440 Business Laptop
-        Quantity: 10 units
-        Purchase Order: PO-2026-0042
-        Serial Numbers:
-        S/N: 7X89W23, S/N: 7X89W24, S/N: 7X89W25
-        S/N: 7X89W26, S/N: 7X89W27, S/N: 7X89W28
-        S/N: 7X89W29, S/N: 7X89W30, S/N: 7X89W31
-        S/N: 7X89W32
-        
-        Tracking: 1Z999AA1234567890
-        """
-        
-        return {"extracted_text": mock_text.strip()}
-        
-    except Exception as e:
-        logger.error(f"OCR extraction failed: {e}")
-        raise HTTPException(status_code=500, detail="OCR extraction failed")
+        raise HTTPException(status_code=500, detail=f"Label analysis failed: {str(e)}")

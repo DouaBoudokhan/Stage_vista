@@ -9,6 +9,7 @@ class ProductBase(BaseModel):
     name: str
     reference: Optional[str] = None
     category: Optional[str] = None
+    tracking_type: Optional[str] = "BULK"
     brand: Optional[str] = None
     model: Optional[str] = None
     quantity: int = 0
@@ -30,6 +31,7 @@ class ProductUpdate(BaseModel):
     name: Optional[str] = None
     reference: Optional[str] = None
     category: Optional[str] = None
+    tracking_type: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
     quantity: Optional[int] = None

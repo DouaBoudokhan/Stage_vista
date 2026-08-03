@@ -5,11 +5,10 @@ export interface InventoryItem {
   id: number;
   productId: number;
   category?: string;
-  brand: string;
-  productName: string;
   articleNumber: string;
   serialNumber?: string;
   quantityAvailable: number;
+  trackingType: 'SERIALIZED' | 'BULK';
   status: string;
   receivedBy: string;
   receivedAt?: string;
@@ -21,11 +20,10 @@ interface InventoryItemResponse {
   id: number;
   product_id: number;
   category?: string;
-  brand: string;
-  product_name: string;
   article_number: string;
   serial_number?: string;
   quantity_available: number;
+  tracking_type: string;
   status: string;
   received_by: string;
   received_at?: string;
@@ -38,11 +36,10 @@ function mapInventoryItem(row: InventoryItemResponse): InventoryItem {
     id: row.id,
     productId: row.product_id,
     category: row.category,
-    brand: row.brand,
-    productName: row.product_name,
     articleNumber: row.article_number,
     serialNumber: row.serial_number,
     quantityAvailable: row.quantity_available,
+    trackingType: row.tracking_type as InventoryItem['trackingType'],
     status: row.status,
     receivedBy: row.received_by,
     receivedAt: row.received_at,

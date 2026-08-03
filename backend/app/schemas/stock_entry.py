@@ -58,6 +58,8 @@ class PackageLabelResponse(BaseModel):
     article_number: str
     quantity: int
     po_on_package: Optional[str] = None
+    upc: Optional[str] = None
+    ean: Optional[str] = None
     success: bool
     message: Optional[str] = None
     warning: Optional[str] = None

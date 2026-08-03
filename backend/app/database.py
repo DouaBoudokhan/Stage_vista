@@ -1,8 +1,8 @@
 """
 Database Configuration
-SQLAlchemy setup for PostgreSQL (Supabase)
+SQLAlchemy setup for PostgreSQL (Supabase) / SQLite
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from .config import settings
@@ -10,7 +10,7 @@ from .config import settings
 # Create SQLAlchemy engine
 engine = create_engine(
     settings.DATABASE_URL,
-    pool_pre_ping=True,  # Verify connections before using
+    pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
 )
@@ -34,74 +34,88 @@ def get_db():
         db.close()
 
 
-from sqlalchemy import inspect, text
-
-
-def _inventory_has_column(column_name: str) -> bool:
-    """Return True if inventory table exists and has the given column."""
+def _table_has_column(table_name: str, column_name: str) -> bool:
+    """Return True if table exists and has the given column."""
     try:
-        inv_columns = {c["name"] for c in inspect(engine).get_columns("inventory")}
-        return column_name in inv_columns
+        columns = {c["name"] for c in inspect(engine).get_columns(table_name)}
+        return column_name in columns
     except Exception:
         return False
 
 
 def init_db():
-    """Initialize database - create all tables and ensure required columns exist"""
-    # Import all models so Base.metadata contains all tables (including new Products)
+    """Initialize database - create all 8 required tables and run light migrations"""
+    # Import models so Base.metadata contains all 8 required tables
     from . import models  # noqa: F401
-    from .models.product import Product  # ensure Products is registered explicitly
 
     Base.metadata.create_all(bind=engine)
 
-    # Run auto-migration for PostgreSQL/Supabase missing columns and types
     with engine.connect() as conn:
+        # 1. Sync legacy schema for documents / purchase_orders if needed
         try:
             conn.execute(text("""
                 ALTER TABLE documents ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
                 ALTER TABLE documents ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-                ALTER TABLE documents ALTER COLUMN supplier TYPE TEXT;
-                ALTER TABLE documents ALTER COLUMN document_number TYPE TEXT;
                 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS description TEXT;
                 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS serial_numbers TEXT;
                 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
                 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
             """))
             conn.commit()
-            print("✅ Legacy schema synchronization for documents/purchase_orders complete")
         except Exception as e:
-            print(f"⚠️ Schema migration notice (legacy tables): {e}")
+            print(f"⚠️ Document/PO schema sync notice: {e}")
 
-    with engine.connect() as conn:
+        # 2. Add tracking_type to products and backfill
+        try:
+            conn.execute(text("""
+                ALTER TABLE products ADD COLUMN IF NOT EXISTS tracking_type VARCHAR DEFAULT 'BULK';
+                UPDATE products SET tracking_type = 'SERIALIZED' WHERE category IN ('Laptop', 'Monitor');
+                UPDATE products SET tracking_type = 'BULK' WHERE category IN ('Mouse', 'Keyboard', 'Headset');
+            """))
+            conn.commit()
+            print("✅ products.tracking_type added and backfilled")
+        except Exception as e:
+            print(f"⚠️ Products tracking_type sync notice: {e}")
+
+        # 3. Add product_id to inventory if missing, and drop legacy inventory.tracking_type
         try:
             conn.execute(text("""
                 ALTER TABLE inventory ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id);
+                ALTER TABLE inventory DROP COLUMN IF EXISTS tracking_type;
             """))
             conn.commit()
-            print("✅ inventory.product_id FK column added (if missing)")
+            print("✅ inventory schema sync (dropped tracking_type from inventory)")
         except Exception as e:
-            print(f"⚠️ Schema migration notice (inventory.product_id FK): {e}")
+            print(f"⚠️ Inventory schema sync notice: {e}")
 
-    with engine.connect() as conn:
+        # 4. Add purchase_order_id to stock_entries
         try:
-            # Legacy Supabase schema uses products.category; greenfield installs get the same via ORM mapping.
             conn.execute(text("""
-                INSERT INTO products (category, stock_on_hand)
+                ALTER TABLE stock_entries ADD COLUMN IF NOT EXISTS purchase_order_id INTEGER REFERENCES purchase_orders(id);
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"⚠️ StockEntries schema sync notice: {e}")
+
+        # 5. Seed products table with 5 core categories and tracking_type
+        try:
+            conn.execute(text("""
+                INSERT INTO products (category, tracking_type, stock_on_hand)
                 VALUES
-                    ('Laptop', 0),
-                    ('Mouse', 0),
-                    ('Keyboard', 0),
-                    ('Monitor', 0),
-                    ('Headset', 0)
+                    ('Laptop', 'SERIALIZED', 0),
+                    ('Mouse', 'BULK', 0),
+                    ('Keyboard', 'BULK', 0),
+                    ('Monitor', 'SERIALIZED', 0),
+                    ('Headset', 'BULK', 0)
                 ON CONFLICT (category) DO NOTHING;
             """))
             conn.commit()
-            print("✅ Products table seeded with 5 core product_types (upsert)")
+            print("✅ Products table seeded with 5 core categories and tracking_types")
         except Exception as e:
             print(f"⚠️ Products seed notice: {e}")
 
-    if _inventory_has_column("category"):
-        with engine.connect() as conn:
+        # 6. Drop legacy inventory.category column if present
+        if _table_has_column("inventory", "category"):
             try:
                 conn.execute(text("""
                     UPDATE inventory
@@ -110,32 +124,13 @@ def init_db():
                     WHERE inventory.product_id IS NULL
                       AND COALESCE(inventory.category, '') = products.category;
                 """))
+                conn.execute(text("ALTER TABLE inventory DROP COLUMN IF EXISTS category;"))
                 conn.commit()
-                print("✅ Back-filled inventory.product_id FK from legacy category mapping")
+                print("✅ Dropped legacy inventory.category column")
             except Exception as e:
-                print(f"⚠️ Product FK back-fill notice: {e}")
+                print(f"⚠️ Legacy category drop notice: {e}")
 
-        with engine.connect() as conn:
-            try:
-                conn.execute(text("ALTER TABLE inventory DROP COLUMN IF EXISTS category"))
-                conn.commit()
-                print("✅ Dropped legacy inventory.category column (product_id is source of truth)")
-            except Exception as e:
-                print(f"⚠️ inventory.category drop notice: {e}")
-    else:
-        print("ℹ️ inventory.category already removed; skipping legacy back-fill/drop")
-
-    with engine.connect() as conn:
-        try:
-            conn.execute(text("""
-                ALTER TABLE inventory ALTER COLUMN product_id SET NOT NULL;
-            """))
-            conn.commit()
-            print("✅ inventory.product_id set NOT NULL")
-        except Exception as e:
-            print(f"⚠️ inventory.product_id NOT NULL notice: {e}")
-
-    with engine.connect() as conn:
+        # 7. Update products.stock_on_hand from active inventory
         try:
             conn.execute(text("""
                 UPDATE products
@@ -149,16 +144,6 @@ def init_db():
                 WHERE products.id = agg.product_id;
             """))
             conn.commit()
-            print("✅ Products.stock_on_hand recomputed as SUM(inventory.quantity_available) per product_type")
+            print("✅ products.stock_on_hand synchronized")
         except Exception as e:
-            print(f"⚠️ stock_on_hand recomputation notice: {e}")
-
-        try:
-            conn.execute(text("""
-                UPDATE products
-                SET stock_on_hand = 0
-                WHERE id NOT IN (SELECT DISTINCT product_id FROM inventory WHERE product_id IS NOT NULL);
-            """))
-            conn.commit()
-        except Exception as e:
-            print(f"⚠️ stock_on_hand zero-fill notice: {e}")
+            print(f"⚠️ stock_on_hand sync notice: {e}")

@@ -10,11 +10,10 @@ class InventoryItem(BaseModel):
     id: int
     product_id: int
     category: Optional[str] = None
-    brand: str
-    product_name: str
     article_number: str
     serial_number: Optional[str] = None
     quantity_available: int
+    tracking_type: str  # SERIALIZED | BULK
     status: str
     received_by: str
     received_at: Optional[datetime] = None
@@ -26,16 +25,15 @@ class InventoryItem(BaseModel):
 
 
 class StockHistoryRecord(BaseModel):
-    """Unified stock-in / stock-out event from audit tables."""
+    """Unified stock-in / stock-out event from stock_entries and stock_exits."""
 
     id: str
-    source_table: str  # stock_entries | stock_exits | inventory_movements
+    source_table: str  # stock_entries | stock_exits
     source_id: int
     action: str  # IN | OUT
     inventory_id: Optional[int] = None
     product_name: Optional[str] = None
     article_number: Optional[str] = None
-    brand: Optional[str] = None
     category: Optional[str] = None
     quantity: int
     technician: str
@@ -43,15 +41,6 @@ class StockHistoryRecord(BaseModel):
     po_number: Optional[str] = None
     ticket_id: Optional[str] = None
     reference: Optional[str] = None
-    notes: Optional[str] = None
-
-
-class InventoryMovementBase(BaseModel):
-    """Base inventory movement schema"""
-    product_id: str
-    action: str
-    quantity: int
-    user: str
     notes: Optional[str] = None
 
 
@@ -65,7 +54,7 @@ class StockIn(BaseModel):
     brand: Optional[str] = None
     productName: Optional[str] = None
     articleNumber: Optional[str] = None
-    serialNumbers: Optional[list[str]] = None
+    serialNumbers: Optional[List[str]] = None
     notes: Optional[str] = None
 
 
@@ -76,20 +65,6 @@ class StockOut(BaseModel):
     ticketId: str
     technician: str
     notes: Optional[str] = None
-
-
-class InventoryMovement(InventoryMovementBase):
-    """Schema for inventory movement response"""
-    id: str
-    product_name: Optional[str] = None
-    po_id: Optional[str] = None
-    reference: Optional[str] = None
-    ticket_id: Optional[str] = None
-    assignee: Optional[str] = None
-    timestamp: datetime
-    
-    class Config:
-        from_attributes = True
 
 
 class TicketBase(BaseModel):
@@ -115,6 +90,6 @@ class Ticket(TicketBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True

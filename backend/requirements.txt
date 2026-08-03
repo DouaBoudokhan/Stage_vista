@@ -23,8 +23,7 @@ opencv-python==4.12.0.88
 torch>=2.0.0
 torchvision>=0.15.0
 
-# OCR
-pytesseract==0.3.13
+# Image handling
 pillow>=10.0.0
 
 # HTTP Client & File Operations

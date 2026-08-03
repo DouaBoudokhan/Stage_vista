@@ -3,13 +3,12 @@ import api from './axios';
 
 export interface StockHistoryRecord {
   id: string;
-  sourceTable: 'stock_entries' | 'stock_exits' | 'inventory_movements';
+  sourceTable: 'stock_entries' | 'stock_exits';
   sourceId: number;
   action: 'IN' | 'OUT';
   inventoryId?: number;
   productName?: string;
   articleNumber?: string;
-  brand?: string;
   category?: string;
   quantity: number;
   technician: string;
@@ -20,7 +19,6 @@ export interface StockHistoryRecord {
   notes?: string;
 }
 
-/** @deprecated Use StockHistoryRecord — kept for HistoryCard compatibility */
 export interface HistoryMovement {
   id: string;
   productId: string;
@@ -44,7 +42,6 @@ interface StockHistoryResponse {
   inventory_id?: number;
   product_name?: string;
   article_number?: string;
-  brand?: string;
   category?: string;
   quantity: number;
   technician: string;
@@ -64,7 +61,6 @@ function mapHistoryRecord(row: StockHistoryResponse): StockHistoryRecord {
     inventoryId: row.inventory_id,
     productName: row.product_name,
     articleNumber: row.article_number,
-    brand: row.brand,
     category: row.category,
     quantity: row.quantity,
     technician: row.technician,
