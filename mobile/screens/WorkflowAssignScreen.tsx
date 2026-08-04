@@ -57,6 +57,19 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
   const [assignedRecords, setAssignedRecords] = useState<any[]>([]);
   const [pendingAssignment, setPendingAssignment] = useState<any>(null);
   const [totalRequested, setTotalRequested] = useState<number>(1);
+  
+  // Check for Jira errors
+  useEffect(() => {
+    if (ticketsIsError && ticketsError) {
+      console.error('[workflow2] Jira error:', ticketsError);
+      const errorMsg = (ticketsError as any)?.response?.data?.detail || (ticketsError as any)?.message || 'Failed to fetch tickets from Jira';
+      Alert.alert(
+        'Jira Service Unavailable',
+        `Cannot fetch tickets from Jira: ${errorMsg}\n\nPlease check:\n- Jira credentials are configured\n- Jira service is accessible\n- Network connection is active`,
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
+      );
+    }
+  }, [ticketsIsError, ticketsError]);
 
   useEffect(() => {
     console.log('[workflow2] tickets query state:', {
@@ -65,7 +78,6 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
       isError: ticketsIsError,
       error: ticketsError,
       ticketsLength: tickets ? tickets.length : undefined,
-      tickets,
     });
   }, [tickets, ticketsLoading, ticketsFetching, ticketsIsError, ticketsError]);
 
@@ -143,6 +155,26 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
   // ─── AI Recommendation ────────────────────────────────
   const getAiRecommendation = async () => {
     if (!selectedProduct) return;
+    
+    // Check if tickets are available
+    if (ticketsIsError) {
+      Alert.alert(
+        'Jira Service Error',
+        'Cannot fetch tickets from Jira. Please ensure Jira service is configured and accessible.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    if (!tickets || tickets.length === 0) {
+      Alert.alert(
+        'No Tickets Available',
+        'No open tickets found in Jira. Please create a ticket in Jira first.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
     setAiLoading(true);
     setAiRecommendation(null);
     setRecommendationList([]);
@@ -153,12 +185,7 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
       selectedProductRef: selectedProduct.ref,
       selectedProductCategory: selectedProduct.category,
       selectedProductBrand: selectedProduct.brand,
-      ticketsLoading,
-      ticketsFetching,
-      ticketsIsError,
-      ticketsError,
-      ticketsLength: tickets ? tickets.length : undefined,
-      tickets,
+      ticketsLength: tickets.length,
     });
     try {
       const rec = await recommendTicketMutation.mutateAsync({
@@ -174,8 +201,14 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
       if (rec.ticket) {
         setTargetTicket(rec.ticket);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('[workflow2] AI Recommendation failed:', e);
+      const errorMsg = e?.response?.data?.detail || e?.message || 'Failed to generate recommendations';
+      Alert.alert(
+        'AI Recommendation Failed',
+        `Could not analyze tickets: ${errorMsg}`,
+        [{ text: 'OK' }]
+      );
     } finally {
       setAiLoading(false);
     }
@@ -648,7 +681,22 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
             {/* ── All Tickets Tab ─── */}
             {method === 'list' && (
               <View>
-                {tickets && tickets.length > 0 ? (
+                {ticketsIsError ? (
+                  <Surface style={styles.dataCard} elevation={1}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={48} color={Colors.error} style={{ alignSelf: 'center', marginBottom: Spacing.md }} />
+                    <Text style={{ color: Colors.error, fontSize: 14, fontWeight: 'bold', textAlign: 'center', marginBottom: Spacing.sm }}>
+                      Jira Service Unavailable
+                    </Text>
+                    <Text style={{ color: Colors.textSecondary, fontSize: 12, textAlign: 'center', lineHeight: 18 }}>
+                      Cannot fetch tickets from Jira. Please check your Jira credentials and network connection.
+                    </Text>
+                  </Surface>
+                ) : ticketsLoading ? (
+                  <Surface style={styles.aiLoadingCard} elevation={1}>
+                    <ActivityIndicator size="large" color={Colors.primaryLight} />
+                    <Text style={styles.aiLoadingText}>Fetching tickets from Jira...</Text>
+                  </Surface>
+                ) : tickets && tickets.length > 0 ? (
                   tickets
                     .filter((t) => {
                       const s = ((t as any).status ?? '').toLowerCase();
@@ -663,9 +711,12 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
                       />
                     ))
                 ) : (
-                  <Text style={{ color: Colors.textSecondary, fontSize: 12, textAlign: 'center', marginTop: Spacing.lg }}>
-                    No open tickets available.
-                  </Text>
+                  <Surface style={styles.dataCard} elevation={1}>
+                    <MaterialCommunityIcons name="ticket-outline" size={48} color={Colors.textSecondary} style={{ alignSelf: 'center', marginBottom: Spacing.md }} />
+                    <Text style={{ color: Colors.textSecondary, fontSize: 12, textAlign: 'center' }}>
+                      No open tickets available in Jira.
+                    </Text>
+                  </Surface>
                 )}
               </View>
             )}

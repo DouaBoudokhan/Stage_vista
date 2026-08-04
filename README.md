@@ -39,9 +39,10 @@ StockIT deterministically enforces equipment tracking rules at the **Product cat
 
 ## 📸 OCR & AI Recognition Workflow
 
-1. **Google ML Kit (Mobile)**: On-device optical character recognition extracts raw document and package label text cleanly.
-2. **Deterministic Parsing (Backend)**: Fast rule-based parsing resolves suppliers, document numbers, purchase orders, article numbers, and serials without AI hallucinations.
-3. **Llama 3.3 LLM Caching (Azure AI)**: Generates human-friendly descriptions for purchase orders and caches them in `purchase_orders.description`.
+1. **YOLO11 Object Detection**: Real-time equipment classification on backend using trained YOLO model.
+2. **Azure Computer Vision OCR**: Server-side text extraction from invoices and shipping labels via Azure Read API.
+3. **Deterministic Parsing (Backend)**: Fast rule-based parsing resolves suppliers, document numbers, purchase orders, article numbers, and serials without AI hallucinations.
+4. **Llama 3.3 LLM Caching (Azure AI)**: Generates human-friendly descriptions for purchase orders and caches them in `purchase_orders.description`.
 4. **YOLO11 Object Detection**: Real-time IT hardware classification into core categories.
 
 ---

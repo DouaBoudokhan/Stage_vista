@@ -147,3 +147,37 @@ def init_db():
             print("✅ products.stock_on_hand synchronized")
         except Exception as e:
             print(f"⚠️ stock_on_hand sync notice: {e}")
+        
+        # 8. Add Jira sync and AI analysis fields to tickets table
+        try:
+            conn.execute(text("""
+                -- Add jira_key column (unique identifier from Jira)
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS jira_key VARCHAR UNIQUE;
+                
+                -- Add Jira sync fields
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS jira_last_updated TIMESTAMP WITH TIME ZONE;
+                
+                -- Add AI analysis cache fields
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ai_analyzed BOOLEAN DEFAULT FALSE NOT NULL;
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ai_analysis TEXT;
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ai_score FLOAT;
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ai_reason TEXT;
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ai_recommended_product VARCHAR;
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ai_recommended_quantity INTEGER;
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ai_confidence FLOAT;
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ai_model VARCHAR;
+                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS analyzed_at TIMESTAMP WITH TIME ZONE;
+                
+                -- Create indexes for performance
+                CREATE INDEX IF NOT EXISTS idx_tickets_jira_key ON tickets(jira_key);
+                CREATE INDEX IF NOT EXISTS idx_tickets_ai_analyzed ON tickets(ai_analyzed);
+                CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
+                
+                -- Backfill jira_key from id for existing tickets
+                UPDATE tickets SET jira_key = id WHERE jira_key IS NULL;
+            """))
+            conn.commit()
+            print("✅ Tickets table extended with Jira sync and AI analysis fields")
+        except Exception as e:
+            print(f"⚠️ Tickets schema sync notice: {e}")
+

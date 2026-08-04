@@ -122,99 +122,46 @@ class YOLOService:
                         
                 except Exception as yolo_error:
                     logger.error(f"YOLO inference failed: {yolo_error}")
-                    return self._get_error_result(width, height, str(yolo_error))
+                    raise Exception(f"YOLO detection failed: {yolo_error}")
             
             else:
-                # Fallback to mock data if model not loaded
-                logger.warning("⚠️ YOLO model not loaded, using mock data")
-                return self._get_mock_result(width, height)
+                # YOLO model not loaded - return clear error
+                logger.error("❌ YOLO model not loaded")
+                raise Exception(
+                    "YOLO model not available. Please ensure best.pt model file exists at models_ai/best.pt"
+                )
             
         except Exception as e:
             logger.error(f"YOLO detection failed: {e}")
-            return self._get_error_result(640, 480, str(e))
+            raise Exception(f"Object detection unavailable: {str(e)}")
     
-    def _get_mock_result(self, width: int, height: int) -> Dict[str, Any]:
-        """Fallback mock result when real YOLO is not available"""
-        return {
-            "category": "Laptop",
-            "confidence": 0.94,
-            "class_id": 0,
-            "model": "Mock Detection",
-            "reference": "MOCK-LAP-001",
-            "bounding_box": {
-                "x": int(width * 0.15),
-                "y": int(height * 0.20), 
-                "width": int(width * 0.70),
-                "height": int(width * 0.60),
-                "x_center": int(width * 0.5),
-                "y_center": int(height * 0.5)
-            },
-            "detected_features": [
-                "Mock Detection", "Screen", "Keyboard", "Trackpad"
-            ],
-            "image_size": {"width": width, "height": height},
-            "processing_time_ms": 180,
-            "yolo_version": "Mock YOLO (Model Not Loaded)",
-            "detection_score": 0.94,
-            "equipment_type": "Laptop"
-        }
     
     def _get_no_detection_result(self, width: int, height: int) -> Dict[str, Any]:
-        """Result when no objects are detected"""
+        """Result when no objects are detected by YOLO"""
         return {
             "category": "No Object Detected",
             "confidence": 0.0,
             "class_id": -1,
-            "model": "No Detection",
-            "reference": "NO-DETECT-001",
+            "model": "YOLO11",
+            "reference": "NO-DETECT",
             "bounding_box": {
-                "x": int(width * 0.25),
-                "y": int(height * 0.25),
-                "width": int(width * 0.5),
-                "height": int(height * 0.5),
+                "x": 0,
+                "y": 0,
+                "width": 0,
+                "height": 0,
                 "x_center": int(width * 0.5),
                 "y_center": int(height * 0.5)
             },
-            "detected_features": ["No objects found"],
+            "detected_features": ["No objects found in image"],
             "image_size": {"width": width, "height": height},
             "processing_time_ms": 50,
-            "yolo_version": "YOLO11 (Real Model)",
+            "yolo_version": "YOLO11",
             "detection_score": 0.0,
-            "equipment_type": "None"
-        }
-    
-    def _get_error_result(self, width: int, height: int, error: str) -> Dict[str, Any]:
-        """Result when detection fails"""
-        return {
-            "category": "Detection Error",
-            "confidence": 0.0,
-            "class_id": -2,
-            "model": "Error",
-            "reference": "ERR-001",
-            "bounding_box": {
-                "x": 50, "y": 50, "width": 200, "height": 200,
-                "x_center": 150, "y_center": 150
-            },
-            "detected_features": [f"Error: {error}"],
-            "image_size": {"width": width, "height": height},
-            "processing_time_ms": 0,
-            "yolo_version": "YOLO11 (Error)",
-            "detection_score": 0.0,
-            "equipment_type": "Error",
-            "error": error
+            "equipment_type": "Unknown"
         }
     
     def get_supported_categories(self) -> List[str]:
-        """
-        Get list of IT equipment categories that YOLO can detect
-        """
+        """Return list of equipment categories the model can detect"""
         if self.model_loaded and self.model:
-            # Return real class names from model
             return list(self.model.names.values())
-        else:
-            # Return default categories
-            return [
-                "Laptop", "Monitor", "Mouse", "Keyboard", 
-                "Headset", "Router", "Server", "Tablet",
-                "Smartphone", "Accessories"
-            ]
+        return []

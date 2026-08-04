@@ -6,9 +6,9 @@ The Stock Entry workflow manages stock reception into inventory with strict supp
 ## Step-by-Step Workflow
 
 1. **STEP 1 — Scan Product**: YOLO11 detects equipment category (`Laptop`, `Mouse`, `Keyboard`, `Monitor`, `Headset`).
-2. **STEP 2 — Scan Document**: Google ML Kit OCR extracts invoice/delivery note text.
+2. **STEP 2 — Scan Document**: Camera captures invoice image, backend processes with Azure OCR to extract invoice/delivery note text.
 3. **STEP 3 — Select Purchase Order**: Technician selects PO.
-4. **STEP 4 — Scan Package Label**: OCR extracts article number, serials, and quantities.
+4. **STEP 4 — Scan Package Label**: Azure Computer Vision OCR extracts article number, serials, and quantities.
 5. **STEP 5 — Save**:
    - **SERIALIZED** (`Laptop`, `Monitor`):
      - Validates serial numbers.

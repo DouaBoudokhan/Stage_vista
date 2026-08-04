@@ -40,7 +40,7 @@ async def analyze_invoice(
         print(f"📄 Document type: {document_type}")
         
         # Validate inputs
-        # Note: ocr_text should come from Google ML Kit on-device recognition
+        # Note: ocr_text should be extracted by Azure Computer Vision OCR on the backend
         # If empty, the document service will return an appropriate error
         
         if not file or not file.filename:

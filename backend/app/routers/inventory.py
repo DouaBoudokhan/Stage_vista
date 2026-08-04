@@ -1,4 +1,4 @@
-"""Inventory Router"""
+"""Inventory Router - Jira as single source of truth"""
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -14,11 +14,10 @@ from ..schemas.inventory import (
 )
 from ..schemas.dashboard import DashboardKPIs
 from ..services.inventory_service import inventory_service
-from ..services.jira_service import JiraRecommendationService
+from ..services.jira_service import jira_service, JiraServiceError
+from ..services.ai_recommendation_service import ai_recommendation_service
 
 router = APIRouter(prefix="", tags=["inventory"])
-
-jira_service = JiraRecommendationService()
 
 
 # Dashboard
@@ -81,38 +80,88 @@ async def assign_stock(
 
 
 @router.post("/stock/recommend-tickets")
-async def recommend_tickets(payload: dict):
-    """Recommend the top three Jira tickets without assigning inventory automatically."""
-    detected_product = payload.get("productRef") or payload.get("category") or payload.get("detectedProduct")
-    category = payload.get("category") or payload.get("detectedProduct")
-    quantity = int(payload.get("quantity") or 1)
-    available_quantity = int(payload.get("availableQuantity") or 1)
-    tickets = payload.get("tickets")
-
-    ranked = jira_service.rank_tickets(
-        detected_product=detected_product,
-        category=category,
-        quantity=quantity,
-        available_quantity=available_quantity,
-        tickets=tickets,
-    )
-
-    if not ranked:
-        return {"recommendations": [], "confidence": 0, "ticket": None, "reason": "No Jira tickets available"}
-
-    top = ranked[0]
-    return {
-        "recommendations": ranked,
-        "confidence": min(95, 70 + top["score"]),
-        "ticket": top["ticket"],
-        "reason": top["reason"],
-    }
+async def recommend_tickets(payload: dict, db: Session = Depends(get_db)):
+    """
+    Recommend the top three Jira tickets using AI analysis.
+    
+    Workflow:
+    1. Fetch live tickets from Jira
+    2. Sync with local cache
+    3. Check cached AI analysis
+    4. Run AI analysis for new/modified tickets
+    5. Return top 3 recommendations
+    """
+    try:
+        # Extract parameters
+        detected_product = payload.get("productRef") or payload.get("category") or payload.get("detectedProduct")
+        category = payload.get("category") or payload.get("detectedProduct")
+        quantity = int(payload.get("quantity") or 1)
+        available_quantity = int(payload.get("availableQuantity") or 1)
+        
+        # Fetch and sync tickets from Jira
+        try:
+            tickets = jira_service.get_tickets(db)
+        except JiraServiceError as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Jira service unavailable: {str(e)}"
+            )
+        
+        if not tickets:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No open tickets available in Jira"
+            )
+        
+        # Rank tickets using AI (with caching)
+        ranked = await ai_recommendation_service.rank_tickets_with_ai(
+            db=db,
+            tickets=tickets,
+            detected_product=detected_product,
+            category=category,
+            quantity=quantity,
+            available_quantity=available_quantity,
+        )
+        
+        if not ranked:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No matching tickets found"
+            )
+        
+        # Return top recommendation
+        top = ranked[0]
+        return {
+            "recommendations": ranked,
+            "confidence": top["confidence"],
+            "ticket": top["ticket"],
+            "reason": top["reason"],
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Recommendation error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate recommendations: {str(e)}"
+        )
 
 
 @router.get("/tickets/search")
-async def search_tickets(query: str):
-    """Search tickets by ID, title, or requester."""
-    return jira_service.search_tickets(query)
+async def search_tickets(query: str, db: Session = Depends(get_db)):
+    """
+    Search tickets by ID, title, or requester.
+    Always fetches fresh data from Jira first.
+    """
+    try:
+        tickets = jira_service.search_tickets(db, query)
+        return [_ticket_to_dict(t) for t in tickets]
+    except JiraServiceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Jira service unavailable: {str(e)}"
+        )
 
 
 # Inventory reads
@@ -164,45 +213,76 @@ async def get_history(
 @router.get("/tickets", response_model=List[TicketSchema])
 async def get_tickets(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
     status: Optional[str] = None
 ):
-    """Get all tickets, optionally filtered by status"""
-    query = db.query(Ticket)
-    if status:
-        query = query.filter(Ticket.status == status)
-    tickets = query.order_by(Ticket.created_at.desc()).all()
-    return tickets
+    """
+    Get all tickets from Jira (live data, synced with local cache).
+    Optionally filter by status.
+    """
+    try:
+        # Fetch and sync from Jira
+        tickets = jira_service.get_tickets(db)
+        
+        # Apply status filter if provided
+        if status:
+            tickets = [t for t in tickets if t.status.lower() == status.lower()]
+        
+        return tickets
+        
+    except JiraServiceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Jira service unavailable: {str(e)}"
+        )
 
 
 @router.get("/tickets/{ticket_id}", response_model=TicketSchema)
 async def get_ticket(
     ticket_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
-    """Get single ticket by ID"""
-    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
-    if not ticket:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Ticket {ticket_id} not found"
+    """
+    Get single ticket by Jira key.
+    Fetches fresh data from Jira first.
+    """
+    try:
+        # Fetch and sync from Jira
+        tickets = jira_service.get_tickets(db)
+        
+        # Find ticket by jira_key or id
+        ticket = next(
+            (t for t in tickets if t.jira_key == ticket_id or t.id == ticket_id),
+            None
         )
-    return ticket
+        
+        if not ticket:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Ticket {ticket_id} not found in Jira"
+            )
+        
+        return ticket
+        
+    except JiraServiceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Jira service unavailable: {str(e)}"
+        )
 
 
-@router.post("/tickets", response_model=TicketSchema, status_code=status.HTTP_201_CREATED)
-async def create_ticket(
-    ticket_data: TicketCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Create a new ticket"""
-    new_ticket = Ticket(
-        id=f"T-{str(uuid.uuid4())[:8].upper()}",
-        **ticket_data.model_dump()
-    )
-    db.add(new_ticket)
-    db.commit()
-    db.refresh(new_ticket)
-    return new_ticket
+# Helper function
+def _ticket_to_dict(ticket: Ticket) -> dict:
+    """Convert Ticket model to dictionary."""
+    return {
+        "id": ticket.jira_key,
+        "jira_key": ticket.jira_key,
+        "title": ticket.title,
+        "description": ticket.description,
+        "priority": ticket.priority,
+        "status": ticket.status,
+        "requester": ticket.requester,
+        "assignee": ticket.assignee,
+        "category": ticket.category,
+        "product_needed": ticket.product_needed,
+        "created_at": ticket.created_at.isoformat() if ticket.created_at else None,
+    }

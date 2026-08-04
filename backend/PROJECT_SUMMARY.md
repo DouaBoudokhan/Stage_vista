@@ -20,4 +20,4 @@ There is NO `inventory_movements` table. History is queried dynamically from `st
 - **BULK** (`products.tracking_type = 'BULK'`): `Headset`, `Mouse`, `Keyboard` (1 row for batch, serial NULL, quantity decremented on assign).
 
 ## OCR
-Google ML Kit on mobile device is the sole OCR engine. No Tesseract or Azure OCR fallbacks.
+Azure Computer Vision is the OCR engine for server-side text extraction from shipping labels. Invoice analysis uses mobile camera capture with backend OCR processing.
