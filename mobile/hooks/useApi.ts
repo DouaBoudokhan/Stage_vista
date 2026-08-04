@@ -1,5 +1,6 @@
 // React Query hooks for all API interactions
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { productsApi, stockApi } from '../api/products';
 import { ticketsApi } from '../api/tickets';
 import { historyApi } from '../api/history';
@@ -16,6 +17,15 @@ export function useProducts() {
     queryKey: ['products'],
     queryFn: productsApi.getAll,
   });
+}
+
+// Debug helper: log loading state for products in one place to avoid noise
+export function useProductsDebug() {
+  const q = useQuery({ queryKey: ['products'], queryFn: productsApi.getAll });
+  useEffect(() => {
+    console.log('[workflow] useProducts state:', { isLoading: q.isLoading, isError: q.isError, dataLength: Array.isArray(q.data) ? q.data.length : undefined, error: q.error });
+  }, [q.isLoading, q.isError, q.data, q.error]);
+  return q;
 }
 
 export function useProduct(id: string) {

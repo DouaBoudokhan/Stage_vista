@@ -17,13 +17,13 @@ export default function InventoryScreen({ navigation }: any) {
     search: searchQuery.trim() || undefined,
   });
 
-  const brands = useMemo(() => {
-    const set = new Set(items?.map((i) => i.brand).filter(Boolean) ?? []);
+  const brands = useMemo<string[]>(() => {
+    const set = new Set((items?.map((i) => i.brand ?? '').filter((b) => !!b) ?? []));
     return ['All', ...Array.from(set).sort()];
   }, [items]);
 
-  const categories = useMemo(() => {
-    const set = new Set(items?.map((i) => i.category).filter(Boolean) ?? []);
+  const categories = useMemo<string[]>(() => {
+    const set = new Set((items?.map((i) => i.category ?? '').filter((c) => !!c) ?? []));
     return ['All', ...Array.from(set).sort()];
   }, [items]);
 

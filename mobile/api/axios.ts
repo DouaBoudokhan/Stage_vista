@@ -18,6 +18,13 @@ api.interceptors.request.use(
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    // Debug: log outgoing request
+    try {
+      console.log('[http] REQUEST:', config.method, config.baseURL + (config.url ?? ''), 'headers:', config.headers);
+      if (config.data) console.log('[http] REQUEST BODY:', config.data);
+    } catch (e) {
+      // ignore logging errors
+    }
     return config;
   },
   (error) => Promise.reject(error),
@@ -42,8 +49,23 @@ const processQueue = (error: unknown, token: string | null = null) => {
 };
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    try {
+      console.log('[http] RESPONSE:', response.config.method, response.config.baseURL + (response.config.url ?? ''), 'status:', response.status);
+      console.log('[http] RESPONSE BODY:', response.data);
+    } catch (e) {
+      // ignore logging errors
+    }
+    return response;
+  },
   async (error: AxiosError) => {
+    // Debug: log response error if present
+    try {
+      if (error.config) {
+        console.log('[http] RESPONSE ERROR for:', error.config.method, error.config.url, 'status:', error.response?.status);
+        console.log('[http] RESPONSE BODY:', error.response?.data);
+      }
+    } catch (e) {}
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
     if (error.response?.status === 401 && !originalRequest._retry) {

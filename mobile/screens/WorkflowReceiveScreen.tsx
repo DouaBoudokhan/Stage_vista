@@ -56,7 +56,7 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
         })) || [],
         quantity: 1
       };
-      setInvoiceScan(formattedResult);
+      setInvoiceScan(formattedResult as ScanResult);
 
       // Auto-suggest purchase order matching & select top PO
       const topPoNumber = formattedResult.purchaseOrderSuggested || formattedResult.detectedItems?.[0]?.ref;

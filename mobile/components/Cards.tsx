@@ -153,14 +153,25 @@ export const HistoryCard: React.FC<HistoryCardProps> = ({ movement }) => {
 
 // ─── Ticket Card ──────────────────────────────────────
 interface TicketCardProps {
-  ticket: Ticket;
+  ticket: Ticket | null;
   onPress?: () => void;
   isSelected?: boolean;
 }
 
 export const TicketCard: React.FC<TicketCardProps> = ({ ticket, onPress, isSelected = false }) => {
-  const priorityColor = PRIORITY_COLORS[ticket.priority] || Colors.textSecondary;
   const theme = useTheme();
+
+  // Guard: if ticket is null/undefined, render nothing
+  if (!ticket) return null;
+
+  const priority = ticket.priority ?? 'Medium';
+  const priorityColor = PRIORITY_COLORS[priority] || Colors.textSecondary;
+
+  // Support both backend schema (title/description/category) and legacy frontend fields
+  const displayTitle = (ticket as any).title ?? ticket.requestedEquipment ?? '';
+  const displayRequester = ticket.requester ?? 'Unknown';
+  const displayDepartment = (ticket as any).category ?? ticket.department ?? '';
+  const displayReason = (ticket as any).description ?? ticket.reason ?? '';
 
   return (
     <Card 
@@ -174,14 +185,16 @@ export const TicketCard: React.FC<TicketCardProps> = ({ ticket, onPress, isSelec
         <View style={styles.ticketHeader}>
           <Text style={styles.ticketId}>{ticket.id}</Text>
           <View style={[styles.priorityBadge, { backgroundColor: priorityColor + '1A' }]}>
-            <Text style={[styles.priorityBadgeText, { color: priorityColor }]}>{ticket.priority}</Text>
+            <Text style={[styles.priorityBadgeText, { color: priorityColor }]}>{priority}</Text>
           </View>
         </View>
-        <Text style={styles.ticketEquipment}>{ticket.requestedEquipment}</Text>
+        <Text style={styles.ticketEquipment}>{displayTitle}</Text>
         <Text style={styles.ticketMeta}>
-          Requested by {ticket.requester} ({ticket.department})
+          Requested by {displayRequester}{displayDepartment ? ` (${displayDepartment})` : ''}
         </Text>
-        <Text style={styles.ticketReason} numberOfLines={2}>"{ticket.reason}"</Text>
+        {displayReason ? (
+          <Text style={styles.ticketReason} numberOfLines={2}>"{displayReason}"</Text>
+        ) : null}
       </Card.Content>
     </Card>
   );

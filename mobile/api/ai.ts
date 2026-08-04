@@ -31,8 +31,11 @@ export const aiApi = {
     productRef: string;
     category: string;
     brand: string;
+    quantity?: number;
+    availableQuantity?: number;
+    tickets?: any[];
   }): Promise<AIRecommendation> => {
-    const { data } = await api.post<AIRecommendation>('/recommend-ticket', payload);
+    const { data } = await api.post<AIRecommendation>('/stock/recommend-tickets', payload);
     return data;
   },
 };

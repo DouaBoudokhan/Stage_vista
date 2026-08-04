@@ -14,8 +14,11 @@ from ..schemas.inventory import (
 )
 from ..schemas.dashboard import DashboardKPIs
 from ..services.inventory_service import inventory_service
+from ..services.jira_service import JiraRecommendationService
 
 router = APIRouter(prefix="", tags=["inventory"])
+
+jira_service = JiraRecommendationService()
 
 
 # Dashboard
@@ -59,7 +62,7 @@ async def assign_stock(
     stock_data: StockOut,
     db: Session = Depends(get_db)
 ):
-    """Assign stock to a ticket"""
+    """Assign stock to a ticket after the user confirms the decision."""
     try:
         result = inventory_service.assign_stock(
             db=db,
@@ -75,6 +78,41 @@ async def assign_stock(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+
+
+@router.post("/stock/recommend-tickets")
+async def recommend_tickets(payload: dict):
+    """Recommend the top three Jira tickets without assigning inventory automatically."""
+    detected_product = payload.get("productRef") or payload.get("category") or payload.get("detectedProduct")
+    category = payload.get("category") or payload.get("detectedProduct")
+    quantity = int(payload.get("quantity") or 1)
+    available_quantity = int(payload.get("availableQuantity") or 1)
+    tickets = payload.get("tickets")
+
+    ranked = jira_service.rank_tickets(
+        detected_product=detected_product,
+        category=category,
+        quantity=quantity,
+        available_quantity=available_quantity,
+        tickets=tickets,
+    )
+
+    if not ranked:
+        return {"recommendations": [], "confidence": 0, "ticket": None, "reason": "No Jira tickets available"}
+
+    top = ranked[0]
+    return {
+        "recommendations": ranked,
+        "confidence": min(95, 70 + top["score"]),
+        "ticket": top["ticket"],
+        "reason": top["reason"],
+    }
+
+
+@router.get("/tickets/search")
+async def search_tickets(query: str):
+    """Search tickets by ID, title, or requester."""
+    return jira_service.search_tickets(query)
 
 
 # Inventory reads

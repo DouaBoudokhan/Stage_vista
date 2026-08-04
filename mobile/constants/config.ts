@@ -4,8 +4,11 @@ import Constants from 'expo-constants';
 // Read API base URL from environment variables (set in app.json or .env)
 const extra = Constants.expirationDate ? {} : (Constants as any).expoConfig?.extra ?? {};
 
+const debuggerHost = (Constants as any).expoConfig?.hostUri ?? (Constants as any).manifest?.debuggerHost;
+const hostIp = debuggerHost ? debuggerHost.split(':')[0] : '192.168.1.16';
+
 export const API_BASE_URL: string =
-  extra.apiUrl ?? process.env.EXPO_PUBLIC_API_URL ?? 'http://172.18.221.31:8000';
+  extra.apiUrl ?? process.env.EXPO_PUBLIC_API_URL ?? `http://${hostIp}:8000`;
 
 export const CONFIG = {
   API_BASE_URL,

@@ -14,6 +14,10 @@ export interface InventoryItem {
   receivedAt?: string;
   purchaseOrderId?: number;
   poNumber?: string;
+  // Optional denormalized fields (may be populated by higher-level API wrappers)
+  productName?: string;
+  brand?: string;
+  image?: string;
 }
 
 interface InventoryItemResponse {

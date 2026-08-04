@@ -37,6 +37,15 @@ class Settings(BaseSettings):
     
     # File Storage
     UPLOAD_DIR: str = "uploads"
+
+    # Jira integration
+    JIRA_USER_EMAIL: str = ""
+    JIRA_API_TOKEN: str = ""
+    JIRA_BASE_URL: str = ""
+    JIRA_PROJECT_KEY: str = "IT"
+    JIRA_ISSUE_TYPE: str = "Hardware request"
+    JIRA_COST_CENTER: str = "TEST-STOCKIT-PFE"
+    JIRA_COMPONENT: str = "ETX Tunis"
     
     # Application
     DEBUG: bool = False
@@ -54,7 +63,7 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> List[str]:
         """Parse CORS origins from comma-separated string"""
-        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
+        return ["*"]
 
 
 # Global settings instance

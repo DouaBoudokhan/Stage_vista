@@ -652,6 +652,58 @@ class InventoryService:
             "po_number": po_number,
         }
 
+    def get_catalog_products(self, db: Session) -> List[Dict[str, Any]]:
+        """Return catalog of products with available stock calculations."""
+        products = db.query(Product).all()
+        inventory_items = (
+            db.query(Inventory)
+            .filter(Inventory.status == "AVAILABLE")
+            .all()
+        )
+        
+        catalog = []
+        for p in products:
+            inv_rows = [inv for inv in inventory_items if inv.product_id == p.id]
+            if p.tracking_type == "SERIALIZED":
+                available_qty = len(inv_rows)
+            else:
+                available_qty = sum(inv.quantity_available or 0 for inv in inv_rows)
+                
+            available_qty = max(available_qty, p.stock_on_hand or 0)
+            
+            brand = inv_rows[0].brand if inv_rows and getattr(inv_rows[0], 'brand', None) else "Generic"
+            item_name = inv_rows[0].product_name if inv_rows and getattr(inv_rows[0], 'product_name', None) and inv_rows[0].product_name != p.product_name else p.product_name
+            ref = inv_rows[0].article_number if inv_rows and getattr(inv_rows[0], 'article_number', None) else p.product_name
+
+            emoji_map = {
+                "headset": "🎧",
+                "laptop": "💻",
+                "monitor": "🖥️",
+                "mouse": "🖱️",
+                "keyboard": "⌨️"
+            }
+            cat_lower = (p.product_name or "").lower()
+            visual_emoji = "📦"
+            for k, e in emoji_map.items():
+                if k in cat_lower:
+                    visual_emoji = e
+                    break
+
+            catalog.append({
+                "id": str(p.id),
+                "name": item_name or p.product_name,
+                "product_name": item_name or p.product_name,
+                "category": p.product_name,
+                "brand": brand,
+                "ref": ref,
+                "reference": ref,
+                "quantity": available_qty,
+                "stock_on_hand": available_qty,
+                "tracking_type": p.tracking_type,
+                "image": visual_emoji,
+            })
+        return catalog
+
     def get_dashboard_kpis(self, db: Session) -> Dict[str, Any]:
         """Compute dashboard KPIs strictly from stock_entries, stock_exits, products, and inventory."""
         now = datetime.utcnow()

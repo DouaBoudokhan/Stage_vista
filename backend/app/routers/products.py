@@ -3,16 +3,29 @@ Product Detection Router
 YOLO11-based object detection for IT equipment
 """
 import os
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from app.services.yolo_service import YOLOService
 import logging
+
+from typing import List
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.services.inventory_service import inventory_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/products", tags=["products"])
 
 yolo_service = YOLOService()
+
+@router.get("", response_model=List[dict])
+@router.get("/", response_model=List[dict])
+async def get_products(db: Session = Depends(get_db)):
+    """
+    Get all products from catalog with live inventory quantities
+    """
+    return inventory_service.get_catalog_products(db)
 
 @router.post("/detect")
 async def detect_product(file: UploadFile = File(...)):

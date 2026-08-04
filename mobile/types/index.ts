@@ -67,7 +67,16 @@ export interface ScanResult {
   reference?: string;
   category?: string;
   confidence: number;
-  boundingBox?: { x: number; y: number; w: number; h: number };
+  // Bounding box with explicit width/height used by UI
+  boundingBox?: { x: number; y: number; width: number; height: number };
+  // Image capture metadata
+  capturedImageUri?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  equipment_type?: string;
+  processing_time_ms?: number;
+  detected_features?: string[];
+  upc?: string;
   supplier?: string;
   invoiceNumber?: string;
   purchaseOrderSuggested?: string;
@@ -129,9 +138,10 @@ export interface LoginResponse {
 }
 
 export interface AIRecommendation {
-  ticket: Ticket;
+  ticket: Ticket | null;
   confidence: number;
   reason: string;
+  recommendations?: Array<{ ticket: Ticket; score: number; reason: string }>;
 }
 
 export interface StockInRequest {
