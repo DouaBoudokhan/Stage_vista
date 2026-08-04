@@ -367,12 +367,21 @@ class InventoryService:
             db.add(ticket)
             db.flush()
 
-        # Resolve Inventory item
+        # Resolve Inventory item by product_id (not inventory id)
         target_inv: Optional[Inventory] = None
         try:
-            int_id = int(str(product_id))
-            target_inv = db.query(Inventory).filter(Inventory.id == int_id).first()
+            int_product_id = int(str(product_id))
+            # Look for available inventory with this product_id
+            target_inv = (
+                db.query(Inventory)
+                .filter(Inventory.product_id == int_product_id)
+                .filter(Inventory.quantity_available > 0)
+                .filter(Inventory.status == "AVAILABLE")
+                .order_by(Inventory.id.asc())
+                .first()
+            )
         except ValueError:
+            # If product_id is not a number, try article_number or serial_number
             target_inv = (
                 db.query(Inventory)
                 .filter(
@@ -380,6 +389,7 @@ class InventoryService:
                     | (Inventory.serial_number == str(product_id))
                 )
                 .filter(Inventory.quantity_available > 0)
+                .filter(Inventory.status == "AVAILABLE")
                 .order_by(Inventory.id.asc())
                 .first()
             )

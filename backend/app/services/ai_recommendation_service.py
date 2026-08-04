@@ -34,18 +34,35 @@ class AIRecommendationService:
         Rank tickets by relevance using AI analysis.
         
         Workflow:
-        1. For each ticket, check if AI analysis is cached and valid
-        2. If cached: reuse stored analysis
-        3. If not cached or outdated: call LLM and cache result
-        4. Return ranked list with confidence scores
+        1. Pre-filter tickets to top 20 most relevant (fast)
+        2. For each top ticket, check if AI analysis is cached and valid
+        3. If cached: reuse stored analysis
+        4. If not cached or outdated: call LLM and cache result
+        5. Return top 3 ranked results
         """
         if not tickets:
             raise ValueError("No tickets available for ranking")
         
-        product_hint = (detected_product or category or "equipment").strip()
+        product_hint = (category or detected_product or "equipment").strip()
+        
+        print("\n" + "="*80)
+        print("🎯 AI RECOMMENDATION REQUEST")
+        print(f"   Detected Product: {detected_product}")
+        print(f"   Category: {category}")
+        print(f"   Product Hint (used): {product_hint}")
+        print(f"   Quantity: {quantity}")
+        print(f"   Available: {available_quantity}")
+        print(f"   Total Tickets: {len(tickets)}")
+        print("="*80)
+        
+        # STEP 1: Pre-filter tickets by equipment keyword (returns ALL matches)
+        print(f"🔍 Pre-filtering {len(tickets)} tickets...")
+        candidates = self._quick_filter_candidates(tickets, product_hint)
+        print(f"✅ Will analyze {len(candidates)} tickets with Azure Llama 3.3\n")
+        
         ranked = []
         
-        for ticket in tickets:
+        for ticket in candidates:
             # Check if we can reuse cached AI analysis
             if ticket.ai_analyzed and not ticket.needs_ai_analysis():
                 # Reuse cached analysis
@@ -99,6 +116,42 @@ class AIRecommendationService:
         # Return top 3
         return ranked[:3]
     
+    def _quick_filter_candidates(
+        self,
+        tickets: List[Ticket],
+        product_hint: str,
+    ) -> List[Ticket]:
+        """
+        Quick filter to find tickets that mention the equipment keyword.
+        Returns ALL tickets that match (no limit).
+        """
+        product_lower = product_hint.lower()
+        matched_tickets = []
+        
+        print(f"🔍 Quick filter: Looking for '{product_hint}' in {len(tickets)} tickets")
+        
+        for ticket in tickets:
+            title = (ticket.title or "").lower()
+            description = (ticket.description or "").lower()
+            text = f"{title} {description}"
+            
+            # Only include tickets that mention the equipment
+            if product_lower in text:
+                matched_tickets.append(ticket)
+        
+        # Show how many matched
+        print(f"✅ Found {len(matched_tickets)} tickets mentioning '{product_hint}'")
+        
+        # Debug: Show first 5 matches
+        if matched_tickets:
+            print(f"\n📊 First 5 matches:")
+            for i, ticket in enumerate(matched_tickets[:5], 1):
+                title_preview = ticket.title[:60] if ticket.title else "No title"
+                print(f"  {i}. {ticket.jira_key}: {title_preview} (Priority: {ticket.priority})")
+            print()
+        
+        return matched_tickets
+    
     async def _analyze_ticket_with_llm(
         self,
         ticket: Ticket,
@@ -107,8 +160,9 @@ class AIRecommendationService:
         available_quantity: int,
     ) -> Dict[str, Any]:
         """
-        Analyze a single ticket using LLM.
+        Analyze a single ticket using Azure AI Foundry Llama 3.3.
         Returns analysis dictionary with score, reason, confidence.
+        No fallback - LLM is required.
         """
         # Build prompt for LLM
         prompt = self._build_analysis_prompt(
@@ -118,28 +172,102 @@ class AIRecommendationService:
             available_quantity=available_quantity,
         )
         
-        try:
-            # Call LLM service (using existing Llama 3.3 integration)
-            # For now, use rule-based scoring as fallback
-            # TODO: Integrate with actual LLM when available
-            analysis = self._rule_based_scoring(
-                ticket=ticket,
-                product_hint=product_hint,
-                quantity=quantity,
-                available_quantity=available_quantity,
-            )
-            
-            return analysis
-            
-        except Exception as e:
-            print(f"❌ LLM analysis failed for ticket {ticket.jira_key}: {e}")
-            # Fallback to rule-based scoring
-            return self._rule_based_scoring(
-                ticket=ticket,
-                product_hint=product_hint,
-                quantity=quantity,
-                available_quantity=available_quantity,
-            )
+        # Call Azure AI Foundry Llama 3.3 (same as invoice analysis)
+        analysis = await self._call_llm_for_analysis(prompt, ticket, product_hint, quantity, available_quantity)
+        return analysis
+    
+    async def _call_llm_for_analysis(
+        self,
+        prompt: str,
+        ticket: Ticket,
+        product_hint: str,
+        quantity: int,
+        available_quantity: int,
+    ) -> Dict[str, Any]:
+        """Call Azure AI Foundry Llama 3.3 for ticket analysis (same model as invoice analysis)"""
+        import aiohttp
+        from ..config import settings
+        
+        # Use Azure AI Foundry credentials (same as invoice analysis)
+        azure_endpoint = getattr(settings, 'AZURE_LLM_ENDPOINT', None) or getattr(settings, 'AZURE_AI_ENDPOINT', None)
+        azure_api_key = getattr(settings, 'AZURE_AI_API_KEY', None)
+        
+        if not azure_endpoint or not azure_api_key:
+            raise Exception("❌ Azure AI Foundry not configured. Set AZURE_AI_ENDPOINT and AZURE_AI_API_KEY in .env")
+        
+        # Ensure endpoint has correct format
+        endpoint_url = azure_endpoint.rstrip('/')
+        if not endpoint_url.endswith('/chat/completions'):
+            if endpoint_url.endswith('/v1'):
+                url = f"{endpoint_url}/chat/completions"
+            else:
+                url = f"{endpoint_url}/openai/v1/chat/completions"
+        else:
+            url = endpoint_url
+        
+        headers = {
+            "Authorization": f"Bearer {azure_api_key}",
+            "api-key": azure_api_key,
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "Llama-3.3-70B-Instruct",  # Same model as invoice analysis
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are an IT support ticket analyzer. Analyze if tickets match available equipment. Return ONLY valid JSON: {\"score\": 0-100, \"reason\": \"brief explanation\", \"confidence\": 0-100}"
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": 150,
+            "temperature": 0.2
+        }
+        
+        print(f"🧠 Calling Azure AI Foundry (Llama 3.3) for ticket {ticket.jira_key}...")
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as response:
+                
+                if response.status != 200:
+                    error_text = await response.text()
+                    print(f"❌ Azure AI Foundry error ({response.status}): {error_text}")
+                    raise Exception(f"Azure AI Foundry API error {response.status}: {error_text}")
+                
+                response_data = await response.json()
+                
+                # Parse LLM response
+                content = response_data["choices"][0]["message"]["content"]
+                
+                print(f"✅ Llama 3.3 response for {ticket.jira_key}: {content[:100]}...")
+                
+                # Try to parse JSON
+                import json
+                import re
+                
+                # Extract JSON from response
+                json_match = re.search(r'\{[^}]+\}', content)
+                if json_match:
+                    analysis_data = json.loads(json_match.group())
+                    
+                    return {
+                        "score": int(analysis_data.get("score", 50)),
+                        "reason": analysis_data.get("reason", "AI analysis"),
+                        "confidence": int(analysis_data.get("confidence", 70)),
+                        "recommended_product": product_hint,
+                        "recommended_quantity": min(quantity, available_quantity),
+                    }
+                else:
+                    raise Exception(f"Could not parse JSON from Llama 3.3 response: {content}")
+    
     
     def _build_analysis_prompt(
         self,
@@ -148,95 +276,46 @@ class AIRecommendationService:
         quantity: int,
         available_quantity: int,
     ) -> str:
-        """Build LLM prompt for ticket analysis."""
-        return f"""Analyze the following IT support ticket and determine if the requested equipment matches the available stock.
+        """Build LLM prompt for ticket analysis with emphasis on urgency."""
+        return f"""Analyze if this IT support ticket matches the available equipment in stock.
 
-Ticket Details:
-- Ticket ID: {ticket.jira_key}
+TICKET INFORMATION:
+- ID: {ticket.jira_key}
 - Title: {ticket.title}
-- Description: {ticket.description or 'No description'}
+- Description: {ticket.description or 'No description provided'}
 - Priority: {ticket.priority}
+- Status: {ticket.status}
 - Requester: {ticket.requester}
 
-Available Stock:
-- Product: {product_hint}
-- Quantity Available: {available_quantity}
-- Quantity Requested: {quantity}
+AVAILABLE STOCK:
+- Equipment Type: {product_hint}
+- Available Quantity: {available_quantity}
+- Requested Quantity: {quantity}
 
-Please provide:
-1. A relevance score (0-100)
-2. A brief reason for the match
-3. Confidence level (0-100)
-4. Recommended product (if different from requested)
-5. Recommended quantity
+TASK:
+Score this ticket based on:
+1. **Equipment Match** (0-50 points): Does the ticket need "{product_hint}"? Look for explicit mentions or related problems.
+2. **URGENCY** (0-50 points): How urgent is this request? Consider:
+   - Priority level (Critical/High = more urgent, Medium/Low = less urgent)
+   - Description urgency indicators: "urgent", "asap", "immediately", "broken", "not working", "can't work", "blocking", "critical issue"
+   - Impact on user's ability to work
+   - Business impact mentioned
 
-Return as JSON."""
-    
-    def _rule_based_scoring(
-        self,
-        ticket: Ticket,
-        product_hint: str,
-        quantity: int,
-        available_quantity: int,
-    ) -> Dict[str, Any]:
-        """
-        Rule-based scoring algorithm (fallback when LLM unavailable).
-        """
-        title = (ticket.title or "").lower()
-        description = (ticket.description or "").lower()
-        text = f"{title} {description}".lower()
-        product_lower = product_hint.lower()
-        
-        score = 0
-        reason_parts = []
-        
-        # Product match (highest weight)
-        if product_lower in text:
-            score += 40
-            reason_parts.append(f"matches {product_hint}")
-        elif any(word in text for word in ["laptop", "monitor", "mouse", "keyboard", "headset"]):
-            score += 20
-            reason_parts.append("mentions equipment type")
-        
-        # Urgency indicators
-        urgency_keywords = ["urgent", "asap", "today", "immediately", "emergency", "critical"]
-        if any(keyword in text for keyword in urgency_keywords):
-            score += 15
-            reason_parts.append("urgent request")
-        
-        # Priority boost
-        priority_scores = {"critical": 15, "high": 10, "medium": 5, "low": 2}
-        priority_score = priority_scores.get(ticket.priority.lower(), 0)
-        score += priority_score
-        if priority_score >= 10:
-            reason_parts.append("high priority")
-        
-        # Quantity matching
-        if quantity > 1:
-            if any(word in text for word in ["multiple", "several", "two", "three"]):
-                score += 10
-                reason_parts.append("supports multiple units")
-        
-        # Availability check
-        if available_quantity >= quantity:
-            score += 10
-        else:
-            score -= 20
-            reason_parts.append("insufficient stock")
-        
-        # Build reason
-        reason = ", ".join(reason_parts) if reason_parts else "general equipment request"
-        
-        # Calculate confidence based on number of matches
-        confidence = min(95, 50 + (len(reason_parts) * 10))
-        
-        return {
-            "score": max(0, min(100, score)),
-            "reason": reason,
-            "confidence": confidence,
-            "recommended_product": product_hint,
-            "recommended_quantity": min(quantity, available_quantity),
-        }
+SCORING GUIDELINES:
+- Score 90-100: Perfect equipment match + HIGH urgency (Critical/High priority OR urgent language in description)
+- Score 70-89: Perfect equipment match + MEDIUM urgency
+- Score 50-69: Perfect equipment match + LOW urgency
+- Score 30-49: Possible equipment match + any urgency
+- Score 0-29: No equipment match OR wrong equipment
+
+RESPONSE FORMAT (JSON only):
+{{
+  "score": <0-100>,
+  "reason": "<brief explanation focusing on equipment match and urgency level>",
+  "confidence": <0-100>
+}}
+
+Return ONLY the JSON, no other text."""
     
     @staticmethod
     def _ticket_to_dict(ticket: Ticket) -> Dict[str, Any]:

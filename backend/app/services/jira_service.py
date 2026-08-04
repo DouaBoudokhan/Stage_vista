@@ -56,12 +56,16 @@ class JiraService:
 
     def fetch_open_tickets_from_jira(self) -> List[Dict[str, Any]]:
         """
-        Fetch open tickets directly from Jira API.
+        Fetch tickets directly from Jira API.
+        Fetches all recent tickets (not just open ones) to have data for testing.
         Raises JiraServiceError if the API is unavailable.
         """
-        url = f"{self.base_url}/rest/api/3/search"
+        # Use the new /search/jql endpoint (old /search endpoint was deprecated in 2024)
+        url = f"{self.base_url}/rest/api/3/search/jql"
         params = {
-            "jql": f"project = {self.project_key} AND statusCategory != Done AND status != Closed",
+            # Fetch all tickets from the project (for testing - you can filter by status later)
+            # In production, you might want to filter: "AND status IN (Open, Assigned, 'In Progress', 'Waiting for triage')"
+            "jql": f"project = {self.project_key} ORDER BY created DESC",
             "maxResults": 100,
             "fields": "summary,description,priority,status,assignee,reporter,created,updated,labels,customfield_*",
         }
@@ -218,11 +222,17 @@ class JiraService:
         Returns:
             List of Ticket objects from local cache (after sync)
         """
+        print("🔄 JiraService.get_tickets() called")
+        
         # Always fetch fresh data from Jira
+        print("📡 Fetching tickets from Jira API...")
         jira_tickets = self.fetch_open_tickets_from_jira()
+        print(f"📥 Got {len(jira_tickets)} tickets from Jira")
         
         # Sync with local cache
+        print("💾 Syncing with local database...")
         synced_tickets = self.sync_tickets_with_cache(db, jira_tickets)
+        print(f"✅ Synced {len(synced_tickets)} tickets")
         
         return synced_tickets
 

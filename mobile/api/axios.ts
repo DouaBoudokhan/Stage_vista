@@ -5,7 +5,7 @@ import { secureAuth } from '../services/auth';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: 60000, // Increased to 60 seconds for AI analysis
   headers: {
     'Content-Type': 'application/json',
   },

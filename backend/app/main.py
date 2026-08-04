@@ -75,11 +75,14 @@ async def health_check():
 
 
 # Include routers (supported under both /api/v1 and root prefix for API client compatibility)
+app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
 app.include_router(document_analysis.router, prefix=settings.API_V1_PREFIX)
 app.include_router(products.router, prefix=settings.API_V1_PREFIX) 
 app.include_router(labels.router, prefix=settings.API_V1_PREFIX)
 app.include_router(inventory.router, prefix=settings.API_V1_PREFIX)
 
+# Also register without prefix for direct access
+app.include_router(auth.router, prefix="")
 app.include_router(document_analysis.router, prefix="")
 app.include_router(products.router, prefix="")
 app.include_router(labels.router, prefix="")

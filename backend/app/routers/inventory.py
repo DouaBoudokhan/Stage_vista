@@ -85,8 +85,8 @@ async def recommend_tickets(payload: dict, db: Session = Depends(get_db)):
     Recommend the top three Jira tickets using AI analysis.
     
     Workflow:
-    1. Fetch live tickets from Jira
-    2. Sync with local cache
+    1. Use tickets from request payload (mobile app already fetched them)
+    2. If no tickets in payload, fetch from Jira
     3. Check cached AI analysis
     4. Run AI analysis for new/modified tickets
     5. Return top 3 recommendations
@@ -98,19 +98,35 @@ async def recommend_tickets(payload: dict, db: Session = Depends(get_db)):
         quantity = int(payload.get("quantity") or 1)
         available_quantity = int(payload.get("availableQuantity") or 1)
         
-        # Fetch and sync tickets from Jira
-        try:
-            tickets = jira_service.get_tickets(db)
-        except JiraServiceError as e:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Jira service unavailable: {str(e)}"
-            )
+        # Check if tickets are provided in payload (avoid duplicate Jira fetch)
+        tickets_data = payload.get("tickets", [])
+        
+        if tickets_data:
+            # Use tickets from request payload (already fetched by mobile app)
+            print(f"📦 Using {len(tickets_data)} tickets from request payload (avoiding duplicate Jira fetch)")
+            
+            # Convert ticket dicts to Ticket objects from database
+            ticket_ids = [t.get("jira_key") or t.get("id") for t in tickets_data if t.get("jira_key") or t.get("id")]
+            tickets = db.query(Ticket).filter(Ticket.jira_key.in_(ticket_ids)).all()
+            
+            if not tickets:
+                print("⚠️ Tickets from payload not found in database, fetching from Jira...")
+                tickets = jira_service.get_tickets(db)
+        else:
+            # No tickets in payload, fetch from Jira
+            print("📡 No tickets in payload, fetching from Jira...")
+            try:
+                tickets = jira_service.get_tickets(db)
+            except JiraServiceError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Jira service unavailable: {str(e)}"
+                )
         
         if not tickets:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No open tickets available in Jira"
+                detail="No open tickets available"
             )
         
         # Rank tickets using AI (with caching)
@@ -219,21 +235,44 @@ async def get_tickets(
     Get all tickets from Jira (live data, synced with local cache).
     Optionally filter by status.
     """
+    print("\n" + "="*80)
+    print("🎫 GET /tickets endpoint called")
+    print(f"   Status filter: {status}")
+    print("="*80)
+    
     try:
+        print("📞 Calling jira_service.get_tickets()...")
+        
         # Fetch and sync from Jira
         tickets = jira_service.get_tickets(db)
         
+        print(f"✅ Received {len(tickets)} tickets from jira_service")
+        
         # Apply status filter if provided
         if status:
+            print(f"🔍 Applying status filter: {status}")
+            original_count = len(tickets)
             tickets = [t for t in tickets if t.status.lower() == status.lower()]
+            print(f"   Filtered from {original_count} to {len(tickets)} tickets")
+        
+        print(f"📤 Returning {len(tickets)} tickets to client")
+        print("="*80 + "\n")
         
         return tickets
         
     except JiraServiceError as e:
+        print(f"❌ JiraServiceError: {e}")
+        print("="*80 + "\n")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Jira service unavailable: {str(e)}"
         )
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        print("="*80 + "\n")
+        raise
 
 
 @router.get("/tickets/{ticket_id}", response_model=TicketSchema)

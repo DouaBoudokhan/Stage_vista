@@ -180,4 +180,21 @@ def init_db():
             print("✅ Tickets table extended with Jira sync and AI analysis fields")
         except Exception as e:
             print(f"⚠️ Tickets schema sync notice: {e}")
+        
+        # 9. Seed default admin user
+        try:
+            from ..utils.security import get_password_hash
+            # Default password: admin123 (should be changed after first login)
+            hashed_password = get_password_hash("admin123")
+            
+            conn.execute(text("""
+                INSERT INTO users (id, email, name, role, hashed_password, is_active)
+                VALUES ('admin-default-user', 'admin@stockit.local', 'Admin User', 'admin', :hashed_password, true)
+                ON CONFLICT (email) DO NOTHING;
+            """), {"hashed_password": hashed_password})
+            conn.commit()
+            print("✅ Default admin user seeded (email: admin@stockit.local, password: admin123)")
+        except Exception as e:
+            print(f"⚠️ User seed notice: {e}")
+
 

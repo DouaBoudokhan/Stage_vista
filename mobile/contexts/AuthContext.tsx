@@ -50,26 +50,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (credentials: LoginRequest) => {
     setIsLoading(true);
     try {
-      // MOCK LOGIN - No backend needed for demo
-      const mockUser: User = {
-        id: '1',
-        name: 'IT Manager',
-        email: credentials.email,
-        role: 'IT Administrator',
-      };
+      // Call real backend login API
+      const response = await authApi.login(credentials);
       
-      // Save mock tokens securely
+      // Save real JWT tokens securely
       await secureAuth.saveTokens({
-        accessToken: 'mock-access-token',
-        refreshToken: 'mock-refresh-token',
+        accessToken: response.access_token,
+        refreshToken: response.refresh_token,
       });
 
+      // Create user object (extract from JWT or use credentials)
+      const userData: User = {
+        id: credentials.email, // Use email as ID for now
+        name: credentials.email.split('@')[0], // Extract name from email
+        email: credentials.email,
+        role: 'admin', // Default role
+      };
+      
       // Save user details
-      await storage.setObject(STORAGE_KEYS.USER_DATA, mockUser);
-      setUser(mockUser);
-    } catch (error) {
+      await storage.setObject(STORAGE_KEYS.USER_DATA, userData);
+      setUser(userData);
+    } catch (error: any) {
       setUser(null);
-      throw error;
+      console.error('Login error:', error);
+      const errorMsg = error?.response?.data?.detail || error?.message || 'Login failed';
+      throw new Error(errorMsg);
     } finally {
       setIsLoading(false);
     }

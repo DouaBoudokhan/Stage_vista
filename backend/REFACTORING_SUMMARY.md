@@ -185,6 +185,45 @@ useEffect(() => {
 
 ---
 
+### 9. **Fixed Authentication Flow** ✅
+**Files**: 
+- `backend/app/main.py` - Registered auth router
+- `backend/app/database.py` - Seeded default admin user
+- `mobile/contexts/AuthContext.tsx` - Removed mock login
+
+**Problem**: Mobile app was using mock tokens, causing `401 Unauthorized` errors on ticket fetching.
+
+**Root Cause**: 
+```typescript
+// OLD CODE (BROKEN)
+await secureAuth.saveTokens({
+  accessToken: 'mock-access-token',  // ❌ Invalid JWT
+  refreshToken: 'mock-refresh-token',
+});
+```
+
+**Solution**:
+1. Registered auth router in main.py (was imported but not included)
+2. Seeded default admin user (email: `admin@stockit.local`, password: `admin123`)
+3. Updated AuthContext to call real login API:
+```typescript
+// NEW CODE (FIXED)
+const response = await authApi.login(credentials);
+await secureAuth.saveTokens({
+  accessToken: response.access_token,    // ✅ Real JWT
+  refreshToken: response.refresh_token,
+});
+```
+
+**Result**: 
+- ✅ Real JWT tokens generated on login
+- ✅ Tokens stored securely in SecureStore
+- ✅ Axios automatically attaches JWT to requests
+- ✅ Token refresh on 401 responses
+- ✅ Ticket fetching works (if Jira configured)
+
+---
+
 ## 🔄 Workflow Changes
 
 ### **Before Refactoring**
