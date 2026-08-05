@@ -1,6 +1,6 @@
 """
 Database Configuration
-SQLAlchemy setup for PostgreSQL (Supabase) / SQLite
+SQLAlchemy setup for PostgreSQL (Supabase)
 """
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
@@ -181,19 +181,30 @@ def init_db():
         except Exception as e:
             print(f"⚠️ Tickets schema sync notice: {e}")
         
-        # 9. Seed default admin user
+        # 9. Seed default users
         try:
-            from ..utils.security import get_password_hash
-            # Default password: admin123 (should be changed after first login)
-            hashed_password = get_password_hash("admin123")
+            from app.utils.security import get_password_hash
             
+            # Admin user (username: admin, password: admin123)
+            hashed_admin_password = get_password_hash("admin123")
             conn.execute(text("""
-                INSERT INTO users (id, email, name, role, hashed_password, is_active)
-                VALUES ('admin-default-user', 'admin@stockit.local', 'Admin User', 'admin', :hashed_password, true)
+                INSERT INTO users (id, email, name, hashed_password, role, is_active)
+                VALUES ('admin-user-id', 'admin@stockit.local', 'Admin User', :hashed_password, 'admin', true)
                 ON CONFLICT (email) DO NOTHING;
-            """), {"hashed_password": hashed_password})
+            """), {"hashed_password": hashed_admin_password})
+            
+            # Doua user (username: doua, password: 0000)
+            hashed_doua_password = get_password_hash("0000")
+            conn.execute(text("""
+                INSERT INTO users (id, email, name, hashed_password, role, is_active)
+                VALUES ('doua-user-id', 'doua@stockit.local', 'Doua User', :hashed_password, 'admin', true)
+                ON CONFLICT (email) DO NOTHING;
+            """), {"hashed_password": hashed_doua_password})
+            
             conn.commit()
-            print("✅ Default admin user seeded (email: admin@stockit.local, password: admin123)")
+            print("✅ Default users seeded:")
+            print("   - admin@stockit.local (password: admin123)")
+            print("   - doua@stockit.local (password: 0000)")
         except Exception as e:
             print(f"⚠️ User seed notice: {e}")
         

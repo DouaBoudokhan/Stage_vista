@@ -2,7 +2,7 @@
 
 ## Requirements
 - Python 3.10+
-- PostgreSQL / Supabase or SQLite database
+- PostgreSQL / Supabase database
 
 ## Setup Steps
 

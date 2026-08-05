@@ -15,7 +15,7 @@ export default function LoginScreen() {
 
   const { control, handleSubmit, formState: { errors } } = useForm<LoginRequest>({
     defaultValues: {
-      email: 'it-admin@vistaservices.io',
+      email: 'doua@stockit.local',
       password: '',
     }
   });
@@ -38,8 +38,8 @@ export default function LoginScreen() {
     setErrorMessage(null);
     try {
       await login({
-        email: 'it-admin@vistaservices.io',
-        password: 'password123', // Mock secret validation
+        email: 'doua@stockit.local',
+        password: '0000',
       });
     } catch (err: any) {
       setErrorMessage('Biometrics verification failed or credentials mismatch.');
