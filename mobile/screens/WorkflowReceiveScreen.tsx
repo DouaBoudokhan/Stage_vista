@@ -114,10 +114,11 @@ export default function WorkflowReceiveScreen({ navigation }: any) {
       });
     }
 
-    // 2. Include DB POs if available
+    // 2. Include DB POs if available (filter out invalid/empty POs)
     if (purchaseOrders && purchaseOrders.length > 0) {
       purchaseOrders.forEach((po) => {
-        if (!list.some((existing) => existing.id === po.id)) {
+        // Only include POs with valid supplier and date information
+        if (po.supplier && po.date && !list.some((existing) => existing.id === po.id)) {
           list.push(po);
         }
       });
