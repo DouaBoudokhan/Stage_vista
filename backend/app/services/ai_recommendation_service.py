@@ -58,6 +58,12 @@ class AIRecommendationService:
         # STEP 1: Pre-filter tickets by equipment keyword (returns ALL matches)
         print(f"🔍 Pre-filtering {len(tickets)} tickets...")
         candidates = self._quick_filter_candidates(tickets, product_hint)
+        
+        # If no candidates found, return empty list (not an error)
+        if not candidates or len(candidates) == 0:
+            print(f"⚠️ No tickets found matching '{product_hint}' - returning empty recommendations")
+            return []
+        
         print(f"✅ Will analyze {len(candidates)} tickets with Azure Llama 3.3\n")
         
         ranked = []
@@ -122,25 +128,42 @@ class AIRecommendationService:
         product_hint: str,
     ) -> List[Ticket]:
         """
-        Quick filter to find tickets that mention the equipment keyword.
+        Quick filter to find tickets that mention the equipment keyword OR synonyms.
         Returns ALL tickets that match (no limit).
         """
+        # Equipment synonyms mapping
+        equipment_synonyms = {
+            "laptop": ["laptop", "computer", "notebook", "pc", "macbook", "thinkpad"],
+            "headset": ["headset", "casque", "headphone", "earphone", "audio", "micro"],
+            "monitor": ["monitor", "screen", "display", "écran"],
+            "mouse": ["mouse", "souris"],
+            "keyboard": ["keyboard", "clavier"],
+        }
+        
         product_lower = product_hint.lower()
+        
+        # Get synonyms for this product
+        search_terms = [product_lower]
+        for key, synonyms in equipment_synonyms.items():
+            if product_lower in synonyms:
+                search_terms = synonyms
+                break
+        
         matched_tickets = []
         
-        print(f"🔍 Quick filter: Looking for '{product_hint}' in {len(tickets)} tickets")
+        print(f"🔍 Quick filter: Looking for '{product_hint}' (synonyms: {', '.join(search_terms)}) in {len(tickets)} tickets")
         
         for ticket in tickets:
             title = (ticket.title or "").lower()
             description = (ticket.description or "").lower()
             text = f"{title} {description}"
             
-            # Only include tickets that mention the equipment
-            if product_lower in text:
+            # Check if any synonym matches
+            if any(term in text for term in search_terms):
                 matched_tickets.append(ticket)
         
         # Show how many matched
-        print(f"✅ Found {len(matched_tickets)} tickets mentioning '{product_hint}'")
+        print(f"✅ Found {len(matched_tickets)} tickets mentioning '{product_hint}' or synonyms")
         
         # Debug: Show first 5 matches
         if matched_tickets:
@@ -276,8 +299,8 @@ class AIRecommendationService:
         quantity: int,
         available_quantity: int,
     ) -> str:
-        """Build LLM prompt for ticket analysis with emphasis on urgency."""
-        return f"""Analyze if this IT support ticket matches the available equipment in stock.
+        """Build LLM prompt for ticket analysis with emphasis on intent and context."""
+        return f"""Analyze if this IT support ticket is requesting NEW/REPLACEMENT equipment, not just help/repair.
 
 TICKET INFORMATION:
 - ID: {ticket.jira_key}
@@ -292,26 +315,49 @@ AVAILABLE STOCK:
 - Available Quantity: {available_quantity}
 - Requested Quantity: {quantity}
 
+CRITICAL: Understand the INTENT of the ticket:
+
+✅ MATCH if ticket requests:
+- "New {product_hint}"
+- "Replacement {product_hint}"
+- "{product_hint} needed"
+- "Request {product_hint}"
+- "Need a {product_hint}"
+- "Get new equipment"
+
+❌ NO MATCH if ticket requests:
+- "Help fix my {product_hint}"
+- "My {product_hint} is broken" (asking for repair help)
+- "Issue with {product_hint}" (troubleshooting request)
+- "Can someone help" (support request)
+- "{product_hint} not working" (technical assistance)
+- Software/driver issues
+
+EXAMPLES:
+- "My laptop won't turn on, can IT help?" → Score: 0 (asking for help, not new laptop)
+- "Request new laptop for new hire" → Score: 100 (requesting new equipment)
+- "Headset microphone broken, need replacement" → Score: 95 (explicitly requesting replacement)
+- "Monitor flickering, how to fix?" → Score: 0 (asking for troubleshooting)
+
 TASK:
 Score this ticket based on:
-1. **Equipment Match** (0-50 points): Does the ticket need "{product_hint}"? Look for explicit mentions or related problems.
-2. **URGENCY** (0-50 points): How urgent is this request? Consider:
-   - Priority level (Critical/High = more urgent, Medium/Low = less urgent)
-   - Description urgency indicators: "urgent", "asap", "immediately", "broken", "not working", "can't work", "blocking", "critical issue"
-   - Impact on user's ability to work
-   - Business impact mentioned
+1. **Equipment Match** (0-50 points): Does ticket REQUEST new/replacement "{product_hint}"?
+2. **URGENCY** (0-50 points): How urgent is the EQUIPMENT REQUEST?
+   - Priority level (Critical/High = more urgent)
+   - Urgency keywords: "urgent", "asap", "immediately", "new hire", "starting soon"
+   - Business impact
 
 SCORING GUIDELINES:
-- Score 90-100: Perfect equipment match + HIGH urgency (Critical/High priority OR urgent language in description)
-- Score 70-89: Perfect equipment match + MEDIUM urgency
-- Score 50-69: Perfect equipment match + LOW urgency
-- Score 30-49: Possible equipment match + any urgency
-- Score 0-29: No equipment match OR wrong equipment
+- 90-100: Clear equipment request + HIGH urgency
+- 70-89:  Clear equipment request + MEDIUM urgency  
+- 50-69:  Clear equipment request + LOW urgency
+- 30-49:  Unclear intent, might be equipment request
+- 0-29:   Troubleshooting/repair help request, NOT equipment request
 
 RESPONSE FORMAT (JSON only):
 {{
   "score": <0-100>,
-  "reason": "<brief explanation focusing on equipment match and urgency level>",
+  "reason": "<brief explanation focusing on whether ticket requests NEW equipment vs help/repair>",
   "confidence": <0-100>
 }}
 

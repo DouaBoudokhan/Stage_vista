@@ -196,5 +196,19 @@ def init_db():
             print("✅ Default admin user seeded (email: admin@stockit.local, password: admin123)")
         except Exception as e:
             print(f"⚠️ User seed notice: {e}")
+        
+        # 10. Rename stock_exits.ticket_number to ticket_id
+        try:
+            # Check if old column exists
+            if _table_has_column("stock_exits", "ticket_number"):
+                conn.execute(text("""
+                    ALTER TABLE stock_exits RENAME COLUMN ticket_number TO ticket_id;
+                """))
+                conn.commit()
+                print("✅ Renamed stock_exits.ticket_number to ticket_id")
+            else:
+                print("✅ stock_exits.ticket_id already correct")
+        except Exception as e:
+            print(f"⚠️ StockExit column rename notice: {e}")
 
 

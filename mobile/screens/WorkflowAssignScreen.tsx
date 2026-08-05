@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { Text, Surface, TextInput, IconButton, Divider, useTheme } from 'react-native-paper';
-import { useProducts, useTickets, useAssignStock, useRecommendTicket } from '../hooks/useApi';
+import { useQuery } from '@tanstack/react-query';
+import { useProducts, useAssignStock, useRecommendTicket } from '../hooks/useApi';
+import { ticketsApi } from '../api/tickets';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
 import { YOLOCameraHUD } from '../components/YOLOCameraHUD';
 import { TicketCard } from '../components/Cards';
@@ -26,13 +28,21 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
 
   // API calls
   const { data: products } = useProducts();
+  
+  // Only fetch tickets when user reaches Step 3 (ticket selection)
   const {
     data: tickets,
     isLoading: ticketsLoading,
     isFetching: ticketsFetching,
     isError: ticketsIsError,
     error: ticketsError,
-  } = useTickets();
+    refetch: refetchTickets,
+  } = useQuery({
+    queryKey: ['tickets'],
+    queryFn: ticketsApi.getAll,
+    enabled: false,  // Don't fetch on mount!
+  });
+  
   const assignStockMutation = useAssignStock();
   const recommendTicketMutation = useRecommendTicket();
 
@@ -214,20 +224,48 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
     }
   };
 
-  // Trigger AI when entering step 3 with method='ai'
+  // Trigger ticket fetch when entering step 3
   useEffect(() => {
-    if (step === 3 && method === 'ai' && selectedProduct && !aiRecommendation) {
-      console.log('[workflow2] step/method effect firing getAiRecommendation:', {
-        step,
-        method,
-        selectedProductId: selectedProduct.id,
-        ticketsLoading,
-        ticketsFetching,
-        ticketsLength: tickets ? tickets.length : undefined,
-      });
-      getAiRecommendation();
+    if (step === 3) {
+      // Fetch tickets when entering Step 3 (if not already fetched)
+      if (!tickets && !ticketsLoading && !ticketsFetching) {
+        console.log('[workflow2] Step 3: Fetching tickets from Jira...');
+        refetchTickets();
+      } else if (tickets && tickets.length > 0) {
+        console.log('[workflow2] Step 3: Tickets already available, count:', tickets.length);
+      }
     }
-  }, [step, method, selectedProduct, aiRecommendation, ticketsLoading, ticketsFetching, tickets]);
+  }, [step, tickets, ticketsLoading, ticketsFetching]);
+  
+  // Separate effect: Trigger AI only AFTER tickets are loaded
+  useEffect(() => {
+    console.log('[workflow2] AI effect check:', {
+      step,
+      method,
+      hasProduct: !!selectedProduct,
+      hasAiRecommendation: !!aiRecommendation,
+      ticketsCount: tickets?.length || 0,
+      ticketsLoading,
+      ticketsFetching,
+    });
+    
+    if (step === 3 && method === 'ai' && selectedProduct) {
+      // Only trigger AI if tickets are loaded and available
+      if (tickets && tickets.length > 0 && !ticketsLoading && !ticketsFetching) {
+        // Only call if we don't have a recommendation yet
+        if (!aiRecommendation) {
+          console.log('[workflow2] ✅ All conditions met - Triggering AI recommendation');
+          getAiRecommendation();
+        } else {
+          console.log('[workflow2] AI recommendation already exists, skipping');
+        }
+      } else if (ticketsLoading || ticketsFetching) {
+        console.log('[workflow2] ⏳ Waiting for tickets to load...');
+      } else if (!tickets || tickets.length === 0) {
+        console.log('[workflow2] ❌ No tickets available');
+      }
+    }
+  }, [step, method, selectedProduct, aiRecommendation, tickets, ticketsLoading, ticketsFetching]);
 
   // ─── Ticket ID Validation ─────────────────────────────
   const handleValidateId = () => {
@@ -405,11 +443,24 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
                     <Text style={styles.productRef}>
                       Confidence: {productScan.confidence ?? 0}%
                     </Text>
-                    <Text style={[styles.productStockText, { color: Colors.success }]}>
+                    <Text style={[
+                      styles.productStockText,
+                      { color: selectedProduct.quantity > 0 ? Colors.success : Colors.error }
+                    ]}>
                       Available: {selectedProduct.quantity} units
                     </Text>
                   </View>
                 </View>
+
+                {/* Out of Stock Warning */}
+                {selectedProduct.quantity === 0 && (
+                  <View style={styles.outOfStockBox}>
+                    <MaterialCommunityIcons name="alert-circle" size={20} color={Colors.error} />
+                    <Text style={styles.outOfStockText}>
+                      This item is out of stock. Cannot proceed with assignment.
+                    </Text>
+                  </View>
+                )}
 
                 <View style={styles.navButtonRow}>
                   <SecondaryButton
@@ -422,15 +473,17 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
                     icon="camera-retake"
                     style={{ flex: 1, marginRight: 8 }}
                   />
-                  <PrimaryButton
-                    title="Choose Quantity"
-                    onPress={() => {
-                      setAvailableQuantity(selectedProduct.quantity);
-                      setStep(2);
-                    }}
-                    icon="arrow-right"
-                    style={{ flex: 1, marginLeft: 8 }}
-                  />
+                  {selectedProduct.quantity > 0 && (
+                    <PrimaryButton
+                      title="Choose Quantity"
+                      onPress={() => {
+                        setAvailableQuantity(selectedProduct.quantity);
+                        setStep(2);
+                      }}
+                      icon="arrow-right"
+                      style={{ flex: 1, marginLeft: 8 }}
+                    />
+                  )}
                 </View>
               </Surface>
             ) : productScan && !selectedProduct ? (
@@ -576,7 +629,7 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
                 onPress={() => {
                   setMethod('ai');
                   setTargetTicket(null);
-                  if (!aiRecommendation) getAiRecommendation();
+                  // Don't call getAiRecommendation here - let useEffect handle it!
                 }}
                 style={[styles.tabBtn, method === 'ai' && styles.tabBtnActive]}
               >
@@ -663,13 +716,35 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
                       </Text>
                     )}
                   </View>
+                ) : aiLoading ? (
+                  <Surface style={styles.aiLoadingCard} elevation={1}>
+                    <ActivityIndicator size="large" color={Colors.primaryLight} />
+                    <Text style={styles.aiLoadingText}>Computing optimal ticket matches...</Text>
+                  </Surface>
+                ) : ticketsLoading || ticketsFetching ? (
+                  <Surface style={styles.aiLoadingCard} elevation={1}>
+                    <ActivityIndicator size="large" color={Colors.primaryLight} />
+                    <Text style={styles.aiLoadingText}>Loading tickets from Jira...</Text>
+                  </Surface>
+                ) : !tickets || tickets.length === 0 ? (
+                  <Surface style={styles.aiLoadingCard} elevation={1}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={32} color={Colors.error} />
+                    <Text style={styles.aiLoadingText}>No tickets found in Jira</Text>
+                    <Text style={{ fontSize: 10, color: Colors.textSecondary, marginTop: Spacing.sm, textAlign: 'center' }}>
+                      Please create tickets in Jira first.
+                    </Text>
+                  </Surface>
                 ) : (
                   <Surface style={styles.aiLoadingCard} elevation={1}>
                     <MaterialCommunityIcons name="robot-off" size={32} color={Colors.textSecondary} />
                     <Text style={styles.aiLoadingText}>No AI results. Tap to retry.</Text>
                     <PrimaryButton
                       title="Retry"
-                      onPress={getAiRecommendation}
+                      onPress={() => {
+                        // Clear previous recommendation and let useEffect trigger
+                        setAiRecommendation(null);
+                        setRecommendationList([]);
+                      }}
                       icon="refresh"
                       style={{ marginTop: Spacing.md }}
                     />
@@ -861,8 +936,8 @@ export default function WorkflowAssignScreen({ route, navigation }: any) {
                 style={{ flex: 1, marginRight: 8 }}
               />
               <PrimaryButton
-                title="Return to Dashboard"
-                onPress={() => navigation.navigate('MainDrawer')}
+                title="Back to Dashboard"
+                onPress={() => navigation.navigate('MainTabs', { screen: 'Home' })}
                 icon="home"
                 style={{ flex: 1, marginLeft: 8 }}
               />
@@ -1198,5 +1273,22 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.textSecondary,
     fontWeight: 'bold',
+  },
+  outOfStockBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    borderColor: '#DC2626',
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  outOfStockText: {
+    fontSize: 11,
+    color: '#DC2626',
+    fontWeight: 'bold',
+    marginLeft: Spacing.sm,
+    flex: 1,
   },
 });

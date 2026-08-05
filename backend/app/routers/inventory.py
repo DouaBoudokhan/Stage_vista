@@ -129,21 +129,39 @@ async def recommend_tickets(payload: dict, db: Session = Depends(get_db)):
                 detail="No open tickets available"
             )
         
+        # Filter out tickets that already have stock exits (already assigned equipment)
+        from ..models.stock_exit import StockExit
+        assigned_ticket_ids = db.query(StockExit.ticket_id).distinct().all()
+        assigned_ticket_ids = [tid[0] for tid in assigned_ticket_ids]
+        
+        available_tickets = [t for t in tickets if t.jira_key not in assigned_ticket_ids]
+        
+        print(f"🔍 Filtering: {len(tickets)} total tickets → {len(available_tickets)} available (excluded {len(tickets) - len(available_tickets)} already assigned)")
+        
+        if not available_tickets:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No unassigned tickets available. All tickets have been assigned equipment."
+            )
+        
         # Rank tickets using AI (with caching)
         ranked = await ai_recommendation_service.rank_tickets_with_ai(
             db=db,
-            tickets=tickets,
+            tickets=available_tickets,
             detected_product=detected_product,
             category=category,
             quantity=quantity,
             available_quantity=available_quantity,
         )
         
-        if not ranked:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No matching tickets found"
-            )
+        if not ranked or len(ranked) == 0:
+            # No matching tickets found - return empty recommendations with helpful message
+            return {
+                "recommendations": [],
+                "confidence": 0,
+                "ticket": None,
+                "reason": f"No tickets found mentioning '{category}' or related equipment. Try manual ticket selection.",
+            }
         
         # Return top recommendation
         top = ranked[0]
